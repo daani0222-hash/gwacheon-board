@@ -253,7 +253,7 @@ function enrichTop10(top10) {
 // =============================================
 // 관리자 설정
 // =============================================
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '관리자1234';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin1234';
 
 function isAdmin(pw) { return (pw || '').trim() === (ADMIN_PASSWORD || '').trim(); }
 function isHoFWinner(userId) {
