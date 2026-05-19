@@ -1,18 +1,18 @@
 /**
- * app.js - 클라이언트 사이드 메인 스크립트
- * Socket.io + Vanilla JS 기반 소셜 커뮤니티
+ * app.js - 과천중 비밀게시판 클라이언트
  */
 
 // =============================================
-// 사용자 세션 관리
+// 사용자 세션
 // =============================================
 const USER = {
-  id:       localStorage.getItem('userId')    || generateId(),
-  nickname: localStorage.getItem('nickname')  || '',
-  color:    localStorage.getItem('color')     || randomColor(),
+  id:        localStorage.getItem('userId')    || generateId(),
+  nickname:  localStorage.getItem('nickname')  || '',
+  color:     localStorage.getItem('color')     || randomColor(),
+  avatarUrl: localStorage.getItem('avatarUrl') || null,
+  bio:       localStorage.getItem('bio')       || '',
 };
 
-// userId가 없으면 새로 생성하여 저장
 if (!localStorage.getItem('userId')) localStorage.setItem('userId', USER.id);
 
 function generateId() {
@@ -20,12 +20,12 @@ function generateId() {
 }
 
 function randomColor() {
-  const colors = ['#667eea','#f093fb','#4facfe','#43e97b','#fa709a','#f6d365','#a18cd1','#fd7043'];
+  const colors = ['#2563eb','#7c3aed','#db2777','#dc2626','#d97706','#16a34a','#0891b2','#374151'];
   return colors[Math.floor(Math.random() * colors.length)];
 }
 
 // =============================================
-// Socket.io 연결
+// Socket.io
 // =============================================
 const socket = io({ transports: ['websocket', 'polling'] });
 
@@ -34,26 +34,25 @@ const socket = io({ transports: ['websocket', 'polling'] });
 // =============================================
 const state = {
   currentView:    'home',
-  currentChannel: 'global',  // global | dm | group
-  activeDMSocket: null,       // 현재 열린 DM 상대방 socketId
-  activeGroupId:  null,       // 현재 열린 그룹 방 ID
+  currentChannel: 'global',
+  activeDMSocket: null,
+  activeGroupId:  null,
   onlineUsers:    [],
   groupRooms:     [],
-  pendingFiles:   [],         // 게시글 첨부 대기 파일
-  chatFile:       null,       // 채팅 첨부 파일
+  pendingFiles:   [],
+  chatFile:       null,
   postPage:       1,
   hasMorePosts:   true,
   isLoadingPosts: false,
   searchQuery:    '',
-  unreadDM:       {},         // { socketId: count }
-  unreadGroup:    {},         // { roomId: count }
+  unreadDM:       {},
+  unreadGroup:    {},
   typingTimers:   {},
   likedPosts:     JSON.parse(localStorage.getItem('likedPosts') || '{}'),
-  myPendingRoom:  null,
 };
 
 // =============================================
-// DOM 요소 참조
+// DOM 참조
 // =============================================
 const $ = (id) => document.getElementById(id);
 
@@ -94,6 +93,7 @@ const dom = {
   rightOnlineList: $('rightOnlineList'),
   profileAvatarLarge: $('profileAvatarLarge'),
   profileName:     $('profileName'),
+  profileBio:      $('profileBio'),
   myPostCount:     $('myPostCount'),
   myLikeCount:     $('myLikeCount'),
   myPostsFeed:     $('myPostsFeed'),
@@ -104,11 +104,14 @@ const dom = {
   roomNameInput:   $('roomNameInput'),
   settingsModal:   $('settingsModal'),
   changeNicknameInput: $('changeNicknameInput'),
+  changeBioInput:  $('changeBioInput'),
+  avatarInput:     $('avatarInput'),
+  settingsAvatarPreview: $('settingsAvatarPreview'),
   toastContainer:  $('toastContainer'),
 };
 
 // =============================================
-// 이모지 목록
+// 이모지
 // =============================================
 const EMOJIS = [
   '😀','😂','😍','🥰','😎','🤔','😅','🙏',
@@ -156,15 +159,43 @@ function bindEvents() {
     if (e.key === 'Enter') handleSetNickname();
   });
 
+  // 닉네임 중복 확인 결과 (startApp 전에 등록)
+  socket.on('nicknameResult', ({ available, nickname }) => {
+    if (available) {
+      USER.nickname = nickname;
+      localStorage.setItem('nickname', nickname);
+      dom.setNicknameBtn.disabled = false;
+      dom.setNicknameBtn.innerHTML = '<i class="fa-solid fa-arrow-right"></i> 입장하기';
+      startApp();
+      showToast(`환영합니다, ${nickname}님!`, 'success');
+    } else {
+      showToast('이미 사용 중인 닉네임입니다. 다른 닉네임을 입력해주세요.', 'error');
+      dom.setNicknameBtn.disabled = false;
+      dom.setNicknameBtn.innerHTML = '<i class="fa-solid fa-arrow-right"></i> 입장하기';
+      dom.nicknameInput.focus();
+    }
+  });
+
   // 게시글 작성
   dom.postContent.addEventListener('input', () => {
     const len = dom.postContent.value.length;
     dom.charCount.textContent = len;
-    dom.charCount.style.color = len > 1800 ? 'var(--danger)' : '';
+    dom.charCount.style.color = len > 1800 ? 'var(--red)' : '';
   });
 
   dom.fileInput.addEventListener('change', handleFileSelect);
   dom.chatFileInput.addEventListener('change', handleChatFileSelect);
+
+  // 아바타 미리보기
+  dom.avatarInput && dom.avatarInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file || !dom.settingsAvatarPreview) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setAvatarEl(dom.settingsAvatarPreview, ev.target.result, USER.color, getInitials(USER.nickname));
+    };
+    reader.readAsDataURL(file);
+  });
 
   // 검색
   let searchTimer;
@@ -186,7 +217,6 @@ function bindEvents() {
     }
   });
 
-  // 타이핑 감지 (채팅)
   let typingTimer;
   dom.messageInput.addEventListener('input', () => {
     socket.emit('typing', { channel: state.currentChannel, roomId: state.activeGroupId });
@@ -207,7 +237,7 @@ function bindEvents() {
 }
 
 // =============================================
-// 닉네임 설정
+// 닉네임 설정 (중복 확인 포함)
 // =============================================
 function handleSetNickname() {
   const nickname = dom.nicknameInput.value.trim();
@@ -216,41 +246,67 @@ function handleSetNickname() {
     dom.nicknameInput.focus();
     return;
   }
-  USER.nickname = nickname;
-  localStorage.setItem('nickname', nickname);
-  startApp();
-  showToast(`환영합니다, ${nickname}님! 🎉`, 'success');
+  dom.setNicknameBtn.disabled = true;
+  dom.setNicknameBtn.textContent = '확인 중...';
+  socket.emit('checkNickname', { nickname });
 }
 
 // =============================================
-// Socket.io 연결 및 이벤트
+// 아바타 렌더링 헬퍼
+// =============================================
+function setAvatarEl(el, avatarUrl, color, initials) {
+  if (avatarUrl) {
+    el.innerHTML = `<img src="${avatarUrl}" alt="avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block">`;
+    el.style.background = 'transparent';
+  } else {
+    el.innerHTML = '';
+    el.textContent = initials;
+    el.style.background = color || '#2563eb';
+  }
+}
+
+function avatarHtml(avatarUrl, color, name, sizeClass = 'sm') {
+  const initials = getInitials(name);
+  if (avatarUrl) {
+    return `<div class="avatar ${sizeClass} no-status" style="background:transparent;overflow:hidden">
+      <img src="${avatarUrl}" alt="avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block">
+    </div>`;
+  }
+  return `<div class="avatar ${sizeClass} no-status" style="background:${color || '#2563eb'}">${initials}</div>`;
+}
+
+// =============================================
+// Socket.io 이벤트
 // =============================================
 function connectSocket() {
   socket.emit('userJoin', {
     nickname: USER.nickname,
     userId: USER.id,
     color: USER.color,
+    avatarUrl: USER.avatarUrl,
+    bio: USER.bio,
   });
 
-  // 온라인 사용자 목록
+  socket.on('nicknameTaken', ({ nickname }) => {
+    showToast(`닉네임 "${escHtml(nickname)}"이(가) 이미 사용 중입니다. 닉네임을 변경해 주세요.`, 'error');
+    setTimeout(() => openSettingsModal(), 500);
+  });
+
   socket.on('onlineUsers', (users) => {
     state.onlineUsers = users;
     renderOnlineUsers();
   });
 
-  // 시스템 메시지
   socket.on('systemMessage', (msg) => {
     appendSystemMessage(msg.message);
   });
 
-  // 새 게시글
   socket.on('newPost', (post) => {
     if (state.currentView === 'home' && !state.searchQuery) {
       prependPost(post);
     }
   });
 
-  // 게시글 삭제
   socket.on('deletePost', (postId) => {
     const el = document.querySelector(`[data-post-id="${postId}"]`);
     if (el) {
@@ -259,7 +315,6 @@ function connectSocket() {
     }
   });
 
-  // 새 댓글
   socket.on('newComment', (comment) => {
     const section = document.querySelector(`[data-comments-id="${comment.postId}"]`);
     if (section) {
@@ -269,12 +324,10 @@ function connectSocket() {
     }
   });
 
-  // 좋아요 업데이트
   socket.on('likeUpdate', ({ postId, likeCount, userId, liked }) => {
     updateLikeUI(postId, likeCount, userId, liked);
   });
 
-  // 전체 채팅 히스토리
   socket.on('globalHistory', (messages) => {
     dom.messageArea.innerHTML = '';
     if (messages.length === 0) {
@@ -290,37 +343,31 @@ function connectSocket() {
     }
   });
 
-  // 전체 채팅 메시지
   socket.on('globalMessage', (msg) => {
     if (state.currentChannel !== 'global' || state.activeDMSocket || state.activeGroupId) {
-      // 다른 채팅 중이면 배지 증가
       incrementChatBadge();
-    } else {
+    }
+    if (state.currentChannel === 'global' && !state.activeDMSocket && !state.activeGroupId) {
       appendMessage(msg, 'global');
       scrollToBottom();
     }
-    if (state.currentChannel === 'global') appendMessage(msg, 'global');
   });
 
-  // DM 메시지
   socket.on('directMessage', (msg) => {
     const isActiveDM = state.activeDMSocket === msg.fromSocketId ||
                        state.activeDMSocket === msg.toSocketId;
-
     if (isActiveDM) {
       appendMessage(msg, 'dm');
       scrollToBottom();
     } else {
-      // 다른 쪽에서 온 DM → 읽지 않음 증가
       const otherId = msg.fromSocketId === socket.id ? msg.toSocketId : msg.fromSocketId;
       state.unreadDM[otherId] = (state.unreadDM[otherId] || 0) + 1;
       updateDMList();
       incrementChatBadge();
-      showToast(`💬 ${msg.fromNickname}: ${msg.content.slice(0,30)}`, 'info');
+      showToast(`💬 ${msg.fromNickname}: ${msg.content.slice(0, 30)}`, 'info');
     }
   });
 
-  // DM 히스토리
   socket.on('dmHistory', ({ otherSocketId, messages }) => {
     if (state.activeDMSocket !== otherSocketId) return;
     dom.messageArea.innerHTML = '';
@@ -328,20 +375,17 @@ function connectSocket() {
     scrollToBottom();
   });
 
-  // 그룹 방 목록
   socket.on('groupRooms', (rooms) => {
     state.groupRooms = rooms;
     renderGroupRooms();
   });
 
-  // 새 그룹 방 생성
   socket.on('groupRoomCreated', (room) => {
     state.groupRooms.push(room);
     renderGroupRooms();
     showToast(`"${room.name}" 채팅방이 만들어졌습니다!`, 'success');
   });
 
-  // 그룹 히스토리
   socket.on('groupRoomHistory', ({ roomId, messages }) => {
     if (state.activeGroupId !== roomId) return;
     dom.messageArea.innerHTML = '';
@@ -349,7 +393,6 @@ function connectSocket() {
     scrollToBottom();
   });
 
-  // 그룹 메시지
   socket.on('groupMessage', (msg) => {
     if (state.activeGroupId === msg.roomId) {
       appendMessage(msg, 'group');
@@ -361,7 +404,6 @@ function connectSocket() {
     }
   });
 
-  // 타이핑
   socket.on('userTyping', ({ nickname, channel, socketId, roomId }) => {
     if (
       (channel === 'global' && state.currentChannel === 'global' && !state.activeDMSocket && !state.activeGroupId) ||
@@ -377,7 +419,7 @@ function connectSocket() {
     }
   });
 
-  socket.on('userStopTyping', ({ socketId }) => {
+  socket.on('userStopTyping', () => {
     dom.typingIndicator.classList.add('hidden');
   });
 
@@ -387,7 +429,13 @@ function connectSocket() {
 
   socket.on('reconnect', () => {
     showToast('서버에 재연결되었습니다!', 'success');
-    socket.emit('userJoin', { nickname: USER.nickname, userId: USER.id, color: USER.color });
+    socket.emit('userJoin', {
+      nickname: USER.nickname,
+      userId: USER.id,
+      color: USER.color,
+      avatarUrl: USER.avatarUrl,
+      bio: USER.bio,
+    });
   });
 }
 
@@ -419,14 +467,11 @@ async function loadPosts(append = false) {
           <p>${state.searchQuery ? '다른 키워드로 검색해보세요' : '첫 번째 게시글을 작성해보세요!'}</p>
         </div>`;
     } else {
-      data.posts.forEach(post => {
-        dom.postFeed.appendChild(createPostElement(post));
-      });
+      data.posts.forEach(post => dom.postFeed.appendChild(createPostElement(post)));
     }
 
     state.hasMorePosts = data.hasMore;
     state.postPage++;
-
     dom.feedEnd.classList.toggle('hidden', state.hasMorePosts || data.posts.length === 0);
 
   } catch (err) {
@@ -450,35 +495,31 @@ function createPostElement(post) {
   const isOwner = post.authorId === USER.id;
   const isLiked = state.likedPosts[post.id];
   const timeAgo = formatTime(post.createdAt);
+  const imagesHtml = buildImagesHtml(post.files);
+  const filesHtml  = buildFilesHtml(post.files);
 
   const el = document.createElement('div');
   el.className = 'post-card';
   el.setAttribute('data-post-id', post.id);
 
-  const imagesHtml = buildImagesHtml(post.files);
-  const filesHtml  = buildFilesHtml(post.files);
-
   el.innerHTML = `
     <div class="post-header">
-      <div class="avatar sm no-status" style="background:${post.authorColor || '#667eea'}">
-        ${getInitials(post.author)}
-      </div>
+      ${avatarHtml(post.authorAvatar, post.authorColor, post.author, 'sm')}
       <div class="post-author-info">
         <div class="post-author-name">${escHtml(post.author)}</div>
         <div class="post-time">${timeAgo}</div>
       </div>
       ${isOwner ? `
         <div class="post-menu">
-          <button class="icon-btn btn-danger" onclick="deletePost('${post.id}')" title="삭제">
+          <button class="icon-btn" onclick="deletePost('${post.id}')" title="삭제"
+                  style="color:var(--red)">
             <i class="fa-solid fa-trash-can"></i>
           </button>
         </div>` : ''}
     </div>
-
     ${post.content ? `<div class="post-content">${escHtml(post.content)}</div>` : ''}
     ${imagesHtml}
     ${filesHtml}
-
     <div class="post-actions">
       <button class="action-btn like-btn ${isLiked ? 'liked' : ''}"
               onclick="toggleLike('${post.id}')">
@@ -493,10 +534,9 @@ function createPostElement(post) {
         <i class="fa-solid fa-share-nodes"></i>
       </button>
     </div>
-
     <div class="comments-section" data-comments-id="${post.id}">
       <div class="comment-form">
-        <div class="avatar sm no-status" style="background:${USER.color}">${getInitials(USER.nickname)}</div>
+        ${avatarHtml(USER.avatarUrl, USER.color, USER.nickname, 'sm')}
         <input type="text" class="comment-input" placeholder="댓글을 입력하세요..."
                maxlength="500"
                onkeydown="if(event.key==='Enter')submitComment('${post.id}',this)" />
@@ -507,22 +547,17 @@ function createPostElement(post) {
       <div class="comments-list" data-comments-list="${post.id}"></div>
     </div>
   `;
-
   return el;
 }
 
 function buildImagesHtml(files) {
   const images = files.filter(f => f.mimetype && f.mimetype.startsWith('image/'));
   if (images.length === 0) return '';
-
-  const countClass = images.length === 1 ? 'single'
-    : images.length === 2 ? 'double' : 'triple';
-
+  const countClass = images.length === 1 ? 'single' : images.length === 2 ? 'double' : 'triple';
   const imgs = images.slice(0, 3).map(f => `
     <div class="post-img" onclick="openImageModal('${f.url}')">
       <img src="${f.url}" alt="${escHtml(f.originalname)}" loading="lazy" />
     </div>`).join('');
-
   return `<div class="post-images ${countClass}">${imgs}</div>`;
 }
 
@@ -534,17 +569,14 @@ function buildFilesHtml(files) {
       <a href="${f.url}" download="${escHtml(f.originalname)}" class="post-file-link">
         <i class="fa-solid fa-file"></i>
         ${escHtml(f.originalname)}
-        <span style="color:var(--text-muted)">(${formatFileSize(f.size)})</span>
+        <span style="color:var(--text-3)">(${formatFileSize(f.size)})</span>
       </a>`).join('')}
   </div>`;
 }
 
-// 피드 맨 앞에 추가
 function prependPost(post) {
-  const existing = document.querySelector(`[data-post-id="${post.id}"]`);
-  if (existing) return;
-  const el = createPostElement(post);
-  dom.postFeed.insertBefore(el, dom.postFeed.firstChild);
+  if (document.querySelector(`[data-post-id="${post.id}"]`)) return;
+  dom.postFeed.insertBefore(createPostElement(post), dom.postFeed.firstChild);
 }
 
 // =============================================
@@ -567,6 +599,7 @@ async function submitPost() {
     formData.append('author', USER.nickname);
     formData.append('authorId', USER.id);
     formData.append('authorColor', USER.color);
+    formData.append('authorAvatar', USER.avatarUrl || '');
     state.pendingFiles.forEach(f => formData.append('files', f));
 
     const res = await fetch('/api/posts', { method: 'POST', body: formData });
@@ -575,7 +608,7 @@ async function submitPost() {
     dom.postContent.value = '';
     dom.charCount.textContent = '0';
     clearFilePreview();
-    showToast('게시글이 작성되었습니다! ✨', 'success');
+    showToast('게시글이 작성되었습니다!', 'success');
 
   } catch (err) {
     showToast('게시글 작성에 실패했습니다.', 'error');
@@ -590,7 +623,6 @@ async function submitPost() {
 // =============================================
 async function deletePost(postId) {
   if (!confirm('게시글을 삭제하시겠습니까?')) return;
-
   try {
     const res = await fetch(`/api/posts/${postId}`, {
       method: 'DELETE',
@@ -625,14 +657,11 @@ async function toggleLike(postId) {
 function updateLikeUI(postId, likeCount, userId, liked) {
   const card = document.querySelector(`[data-post-id="${postId}"]`);
   if (!card) return;
-
   const btn   = card.querySelector('.like-btn');
   const icon  = btn.querySelector('i');
   const count = btn.querySelector('.like-count');
-
-  const isMe = userId === USER.id;
+  const isMe  = userId === USER.id;
   const currentLiked = isMe ? liked : btn.classList.contains('liked');
-
   btn.classList.toggle('liked', currentLiked);
   icon.className = currentLiked ? 'fa-solid fa-heart' : 'fa-regular fa-heart';
   count.textContent = likeCount;
@@ -644,7 +673,6 @@ function updateLikeUI(postId, likeCount, userId, liked) {
 function toggleComments(postId) {
   const section = document.querySelector(`[data-comments-id="${postId}"]`);
   const isOpen = section.classList.contains('open');
-
   if (!isOpen) {
     section.classList.add('open');
     loadComments(postId);
@@ -671,11 +699,9 @@ function appendComment(listEl, comment) {
   el.className = 'comment-item';
   el.setAttribute('data-comment-id', comment.id);
   el.innerHTML = `
-    <div class="avatar sm no-status" style="background:${comment.authorColor || '#667eea'}">
-      ${getInitials(comment.author)}
-    </div>
+    ${avatarHtml(comment.authorAvatar, comment.authorColor, comment.author, 'sm')}
     <div class="comment-body">
-      <div class="comment-author" style="color:${comment.authorColor || '#667eea'}">${escHtml(comment.author)}</div>
+      <div class="comment-author" style="color:${comment.authorColor || '#2563eb'}">${escHtml(comment.author)}</div>
       <div class="comment-text">${escHtml(comment.content)}</div>
       <div class="comment-time">${formatTime(comment.createdAt)}</div>
     </div>
@@ -686,7 +712,6 @@ function appendComment(listEl, comment) {
 async function submitComment(postId, inputEl) {
   const content = inputEl.value.trim();
   if (!content) return;
-
   try {
     const res = await fetch(`/api/posts/${postId}/comments`, {
       method: 'POST',
@@ -696,6 +721,7 @@ async function submitComment(postId, inputEl) {
         author: USER.nickname,
         authorId: USER.id,
         authorColor: USER.color,
+        authorAvatar: USER.avatarUrl || null,
       }),
     });
     if (!res.ok) throw new Error();
@@ -709,8 +735,7 @@ async function submitComment(postId, inputEl) {
 // 파일 업로드 (게시글)
 // =============================================
 function handleFileSelect(e) {
-  const files = Array.from(e.target.files);
-  addFilesToPreview(files);
+  addFilesToPreview(Array.from(e.target.files));
   e.target.value = '';
 }
 
@@ -719,7 +744,6 @@ function addFilesToPreview(files) {
     showToast('파일은 최대 5개까지 첨부 가능합니다.', 'warning');
     return;
   }
-
   files.forEach(file => {
     if (file.size > 10 * 1024 * 1024) {
       showToast(`${file.name}: 10MB 초과 파일은 업로드할 수 없습니다.`, 'error');
@@ -727,18 +751,15 @@ function addFilesToPreview(files) {
     }
     state.pendingFiles.push(file);
   });
-
   renderFilePreview();
 }
 
 function renderFilePreview() {
   dom.filePreviewArea.innerHTML = '';
   dom.filePreviewArea.classList.toggle('hidden', state.pendingFiles.length === 0);
-
   state.pendingFiles.forEach((file, i) => {
     const item = document.createElement('div');
     item.className = 'file-preview-item';
-
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -752,7 +773,6 @@ function renderFilePreview() {
         <div class="file-info"><i class="fa-solid fa-file"></i> ${escHtml(file.name)}</div>
         <button class="file-preview-remove" onclick="removeFile(${i})"><i class="fa-solid fa-xmark"></i></button>`;
     }
-
     dom.filePreviewArea.appendChild(item);
   });
 }
@@ -768,26 +788,19 @@ function clearFilePreview() {
   dom.filePreviewArea.classList.add('hidden');
 }
 
-// 드래그 앤 드롭
 function setupDropZone() {
   const postCreator = document.querySelector('.post-creator');
-
   postCreator.addEventListener('dragover', (e) => {
     e.preventDefault();
     dom.dropZone.classList.remove('hidden');
   });
-
   postCreator.addEventListener('dragleave', (e) => {
-    if (!postCreator.contains(e.relatedTarget)) {
-      dom.dropZone.classList.add('hidden');
-    }
+    if (!postCreator.contains(e.relatedTarget)) dom.dropZone.classList.add('hidden');
   });
-
   postCreator.addEventListener('drop', (e) => {
     e.preventDefault();
     dom.dropZone.classList.add('hidden');
-    const files = Array.from(e.dataTransfer.files);
-    addFilesToPreview(files);
+    addFilesToPreview(Array.from(e.dataTransfer.files));
   });
 }
 
@@ -800,7 +813,6 @@ function setupInfiniteScroll() {
       loadPosts(true);
     }
   }, { threshold: 0.1 });
-
   observer.observe(dom.loadMoreTrigger);
 }
 
@@ -810,10 +822,8 @@ function setupInfiniteScroll() {
 function openGlobalChat() {
   state.activeDMSocket = null;
   state.activeGroupId  = null;
-
   updateChatHeader('전체 채팅', '모든 사용자와 대화', 'fa-earth-asia');
   setActiveChannelItem('chatList-global', 0);
-  socket.emit('getGlobalHistory');
   dom.messageInput.placeholder = '전체 채팅에 메시지를 입력하세요...';
   dom.messageInput.focus();
 }
@@ -821,20 +831,14 @@ function openGlobalChat() {
 function openDM(targetSocketId, targetNickname, targetColor) {
   state.activeDMSocket = targetSocketId;
   state.activeGroupId  = null;
-
-  // 읽지 않은 메시지 초기화
   delete state.unreadDM[targetSocketId];
   updateDMList();
   updateChatBadge();
-
   updateChatHeader(targetNickname, '1:1 다이렉트 메시지', 'fa-user',
-    `background:${targetColor || '#667eea'}`);
+    `background:${targetColor || '#2563eb'}`);
   dom.messageInput.placeholder = `${targetNickname}에게 메시지...`;
-
   dom.messageArea.innerHTML = '';
   socket.emit('getDMHistory', { otherSocketId: targetSocketId });
-
-  // 채팅 뷰로 전환
   if (state.currentView !== 'chat') switchView('chat');
   switchChatTab('dm');
   dom.messageInput.focus();
@@ -843,14 +847,11 @@ function openDM(targetSocketId, targetNickname, targetColor) {
 function openGroupChat(roomId, roomName) {
   state.activeGroupId  = roomId;
   state.activeDMSocket = null;
-
   delete state.unreadGroup[roomId];
   renderGroupRooms();
   updateChatBadge();
-
   updateChatHeader(roomName, '그룹 채팅방', 'fa-users');
   dom.messageInput.placeholder = `${roomName}에 메시지 입력...`;
-
   dom.messageArea.innerHTML = '';
   socket.emit('joinGroupRoom', { roomId });
   dom.messageInput.focus();
@@ -859,12 +860,7 @@ function openGroupChat(roomId, roomName) {
 function sendMessage() {
   const content = dom.messageInput.value.trim();
   if (!content && !state.chatFile) return;
-
-  const payload = {
-    content,
-    file: state.chatFile,
-  };
-
+  const payload = { content, file: state.chatFile };
   if (state.activeGroupId) {
     socket.emit('groupMessage', { roomId: state.activeGroupId, ...payload });
   } else if (state.activeDMSocket) {
@@ -872,7 +868,6 @@ function sendMessage() {
   } else {
     socket.emit('globalMessage', payload);
   }
-
   dom.messageInput.value = '';
   state.chatFile = null;
   dom.chatFilePreview.classList.add('hidden');
@@ -881,22 +876,20 @@ function sendMessage() {
 }
 
 function appendMessage(msg, type) {
-  // 중복 방지
   if (document.querySelector(`[data-msg-id="${msg.id}"]`)) return;
-
   if (msg.type === 'system' || (!msg.content && !msg.file && msg.message)) {
     appendSystemMessage(msg.message || msg.content);
     return;
   }
-
   const isMe = (type === 'dm')
     ? msg.fromSocketId === socket.id
     : (msg.authorId === USER.id || msg.socketId === socket.id);
 
-  const author    = msg.author || msg.fromNickname || msg.authorNickname || '알 수 없음';
-  const color     = msg.authorColor || msg.fromColor || '#667eea';
-  const content   = msg.content || '';
-  const timeStr   = formatTime(msg.createdAt);
+  const author  = msg.author || msg.fromNickname || '알 수 없음';
+  const color   = msg.authorColor || msg.fromColor || '#2563eb';
+  const avatar  = msg.authorAvatar || msg.fromAvatar || null;
+  const content = msg.content || '';
+  const timeStr = formatTime(msg.createdAt);
 
   const el = document.createElement('div');
   el.className = `msg-item ${isMe ? 'mine' : ''}`;
@@ -918,9 +911,7 @@ function appendMessage(msg, type) {
   }
 
   el.innerHTML = `
-    <div class="msg-avatar avatar sm no-status" style="background:${color}">
-      ${getInitials(author)}
-    </div>
+    ${avatarHtml(avatar, color, author, 'sm')}
     <div class="msg-content-wrap">
       <div class="msg-header">
         <span class="msg-author" style="color:${color}">${escHtml(author)}</span>
@@ -930,7 +921,6 @@ function appendMessage(msg, type) {
       ${fileHtml}
     </div>
   `;
-
   dom.messageArea.appendChild(el);
 }
 
@@ -951,8 +941,7 @@ function updateChatHeader(name, desc, iconClass, iconStyle = '') {
   dom.chatHeaderName.textContent = name;
   dom.chatHeaderDesc.textContent = desc;
   dom.chatHeaderIcon.innerHTML = `<i class="fa-solid ${iconClass}"></i>`;
-  if (iconStyle) dom.chatHeaderIcon.style.cssText = iconStyle;
-  else dom.chatHeaderIcon.style.cssText = '';
+  dom.chatHeaderIcon.style.cssText = iconStyle;
 }
 
 function setActiveChannelItem(listId, index) {
@@ -964,14 +953,11 @@ function setActiveChannelItem(listId, index) {
   }
 }
 
-// 채팅 파일 첨부
 function handleChatFileSelect(e) {
   const file = e.target.files[0];
   if (!file) return;
-
   const formData = new FormData();
   formData.append('file', file);
-
   fetch('/api/upload', { method: 'POST', body: formData })
     .then(r => r.json())
     .then(data => {
@@ -983,7 +969,6 @@ function handleChatFileSelect(e) {
         <span class="remove-preview" onclick="removeChatFile()">✕</span>`;
     })
     .catch(() => showToast('파일 업로드 실패', 'error'));
-
   e.target.value = '';
 }
 
@@ -994,33 +979,29 @@ function removeChatFile() {
 }
 
 // =============================================
-// 채팅 탭 전환
+// 채팅 탭
 // =============================================
 function switchChatTab(tab) {
   state.currentChannel = tab;
-
   document.querySelectorAll('.chat-tab').forEach(t => {
     t.classList.toggle('active', t.dataset.channel === tab);
   });
-
   ['global', 'dm', 'group'].forEach(ch => {
     const el = $(`chatList-${ch}`);
     if (el) el.classList.toggle('hidden', ch !== tab);
   });
-
   if (tab === 'global' && !state.activeDMSocket && !state.activeGroupId) {
     openGlobalChat();
   }
 }
 
 // =============================================
-// 배지 관련
+// 배지
 // =============================================
 function incrementChatBadge() {
   if (state.currentView === 'chat') return;
   const current = parseInt(dom.chatBadge.textContent || '0');
-  const next = current + 1;
-  dom.chatBadge.textContent = next;
+  dom.chatBadge.textContent = current + 1;
   dom.chatBadge.classList.remove('hidden');
 }
 
@@ -1032,7 +1013,7 @@ function updateChatBadge() {
 }
 
 // =============================================
-// 그룹 방 관련
+// 그룹 방
 // =============================================
 function openCreateRoomModal() {
   dom.createRoomModal.classList.remove('hidden');
@@ -1051,7 +1032,6 @@ function confirmCreateRoom() {
   closeCreateRoomModal();
 }
 
-// 엔터로 방 생성
 dom.roomNameInput && dom.roomNameInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') confirmCreateRoom();
 });
@@ -1063,27 +1043,23 @@ function renderOnlineUsers() {
   const others = state.onlineUsers.filter(u => u.socketId !== socket.id);
   dom.onlineCount.textContent = state.onlineUsers.length;
 
-  // 사이드바 목록
   dom.onlineUsersList.innerHTML = others.length === 0
-    ? '<div style="padding:6px 8px;font-size:0.75rem;color:var(--text-muted)">혼자 접속 중...</div>'
+    ? '<div style="padding:6px 8px;font-size:0.75rem;color:var(--text-3)">혼자 접속 중...</div>'
     : others.map(u => `
         <div class="online-user-item" onclick="openDM('${u.socketId}','${escHtml(u.nickname)}','${u.color}')">
-          <div class="avatar sm" style="background:${u.color}">${getInitials(u.nickname)}</div>
+          ${avatarHtml(u.avatarUrl, u.color, u.nickname, 'sm')}
           <span class="online-user-name">${escHtml(u.nickname)}</span>
         </div>`).join('');
 
-  // 오른쪽 사이드바 카운트
-  const countEl = document.getElementById('onlineCountRight');
+  const countEl = $('onlineCountRight');
   if (countEl) countEl.textContent = state.onlineUsers.length;
 
-  // 오른쪽 사이드바
   dom.rightOnlineList.innerHTML = state.onlineUsers.map(u => `
     <div class="right-online-item" onclick="openDM('${u.socketId}','${escHtml(u.nickname)}','${u.color}')">
-      <div class="avatar sm" style="background:${u.color}">${getInitials(u.nickname)}</div>
+      ${avatarHtml(u.avatarUrl, u.color, u.nickname, 'sm')}
       <span class="right-online-item-name">${escHtml(u.nickname)}${u.socketId === socket.id ? ' (나)' : ''}</span>
     </div>`).join('');
 
-  // DM 목록 업데이트
   updateDMList();
 }
 
@@ -1096,14 +1072,13 @@ function updateDMList() {
     </div>`;
     return;
   }
-
   dom.dmList.innerHTML = others.map(u => {
     const unread = state.unreadDM[u.socketId] || 0;
     const isActive = state.activeDMSocket === u.socketId;
     return `
       <div class="dm-item ${isActive ? 'active' : ''}"
            onclick="openDM('${u.socketId}','${escHtml(u.nickname)}','${u.color}')">
-        <div class="avatar sm" style="background:${u.color}">${getInitials(u.nickname)}</div>
+        ${avatarHtml(u.avatarUrl, u.color, u.nickname, 'sm')}
         <span class="dm-item-name">${escHtml(u.nickname)}</span>
         ${unread > 0 ? `<span class="dm-unread">${unread}</span>` : ''}
       </div>`;
@@ -1114,22 +1089,20 @@ function updateDMList() {
 // 그룹 방 렌더링
 // =============================================
 function renderGroupRooms() {
-  // 사이드바
   dom.groupRoomsList.innerHTML = state.groupRooms.length === 0
-    ? '<div style="padding:6px 8px;font-size:0.72rem;color:var(--text-muted)">방이 없습니다</div>'
+    ? '<div style="padding:6px 8px;font-size:0.72rem;color:var(--text-3)">방이 없습니다</div>'
     : state.groupRooms.map(r => `
         <div class="room-item" onclick="openGroupChat('${r.id}','${escHtml(r.name)}')">
           <i class="fa-solid fa-hashtag"></i>
           ${escHtml(r.name)}
         </div>`).join('');
 
-  // 채팅 탭 내 그룹 목록
   if (state.groupRooms.length === 0) {
     dom.groupList.innerHTML = `<div class="empty-state-sm">
       <i class="fa-solid fa-users"></i><p>채팅방이 없습니다</p>
     </div>`;
   } else {
-    const items = state.groupRooms.map(r => {
+    dom.groupList.innerHTML = state.groupRooms.map(r => {
       const unread = state.unreadGroup[r.id] || 0;
       const isActive = state.activeGroupId === r.id;
       return `
@@ -1142,7 +1115,6 @@ function renderGroupRooms() {
           ${unread > 0 ? `<span class="dm-unread">${unread}</span>` : ''}
         </div>`;
     }).join('');
-    dom.groupList.innerHTML = items;
   }
 }
 
@@ -1151,30 +1123,19 @@ function renderGroupRooms() {
 // =============================================
 function switchView(viewName) {
   state.currentView = viewName;
-
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-
-  const view = document.getElementById(`view-${viewName}`);
+  const view = $(`view-${viewName}`);
   if (view) view.classList.add('active');
-
   const navItem = document.querySelector(`[data-view="${viewName}"]`);
   if (navItem) navItem.classList.add('active');
-
-  // 채팅 배지 초기화
   if (viewName === 'chat') {
     dom.chatBadge.textContent = '0';
     dom.chatBadge.classList.add('hidden');
     if (!state.activeDMSocket && !state.activeGroupId) openGlobalChat();
   }
-
-  // 프로필 뷰
   if (viewName === 'profile') loadProfileView();
-
-  // 탐색 뷰
   if (viewName === 'explore') loadExploreView();
-
-  // 모바일: 사이드바 닫기
   closeSidebar();
 }
 
@@ -1183,17 +1144,15 @@ function switchView(viewName) {
 // =============================================
 function loadProfileView() {
   dom.profileName.textContent = USER.nickname;
-  dom.profileAvatarLarge.textContent = getInitials(USER.nickname);
-  dom.profileAvatarLarge.style.background = USER.color;
+  if (dom.profileBio) dom.profileBio.textContent = USER.bio || '소개글이 없습니다.';
+  setAvatarEl(dom.profileAvatarLarge, USER.avatarUrl, USER.color, getInitials(USER.nickname));
 
-  // 내 게시글 불러오기
   fetch('/api/posts?limit=50')
     .then(r => r.json())
     .then(data => {
       const myPosts = data.posts.filter(p => p.authorId === USER.id);
       dom.myPostCount.textContent = myPosts.length;
       dom.myLikeCount.textContent = myPosts.reduce((sum, p) => sum + (p.likeCount || 0), 0);
-
       dom.myPostsFeed.innerHTML = '';
       if (myPosts.length === 0) {
         dom.myPostsFeed.innerHTML = `<div class="empty-feed">
@@ -1221,35 +1180,26 @@ function loadExploreView() {
         </div>`;
         return;
       }
-      data.posts.forEach(p => {
-        dom.exploreGrid.appendChild(createPostElement(p));
-      });
+      data.posts.forEach(p => dom.exploreGrid.appendChild(createPostElement(p)));
     });
 }
 
 // =============================================
-// UI 업데이트
+// 프로필 UI 업데이트
 // =============================================
 function updateProfileUI() {
-  const initials = getInitials(USER.nickname);
-
-  // 사이드바 프로필
   dom.sidebarNickname.textContent = USER.nickname;
-  dom.sidebarAvatar.textContent = initials;
-  dom.sidebarAvatar.style.background = USER.color;
+  setAvatarEl(dom.sidebarAvatar, USER.avatarUrl, USER.color, getInitials(USER.nickname));
   dom.sidebarAvatar.className = 'avatar sm no-status';
 
-  // 게시글 작성 아바타
-  dom.creatorAvatar.textContent = initials;
-  dom.creatorAvatar.style.background = USER.color;
+  setAvatarEl(dom.creatorAvatar, USER.avatarUrl, USER.color, getInitials(USER.nickname));
   dom.creatorAvatar.className = 'avatar sm no-status';
 
-  // 프로필 뷰
   if (dom.profileAvatarLarge) {
-    dom.profileAvatarLarge.textContent = initials;
-    dom.profileAvatarLarge.style.background = USER.color;
+    setAvatarEl(dom.profileAvatarLarge, USER.avatarUrl, USER.color, getInitials(USER.nickname));
     dom.profileName.textContent = USER.nickname;
   }
+  if (dom.profileBio) dom.profileBio.textContent = USER.bio || '소개글이 없습니다.';
 }
 
 // =============================================
@@ -1258,8 +1208,13 @@ function updateProfileUI() {
 function openSettingsModal() {
   dom.settingsModal.classList.remove('hidden');
   dom.changeNicknameInput.value = USER.nickname;
+  if (dom.changeBioInput) dom.changeBioInput.value = USER.bio || '';
 
-  // 현재 색상 선택 표시
+  if (dom.settingsAvatarPreview) {
+    setAvatarEl(dom.settingsAvatarPreview, USER.avatarUrl, USER.color, getInitials(USER.nickname));
+    dom.settingsAvatarPreview.className = 'avatar lg no-status';
+  }
+
   document.querySelectorAll('.color-opt').forEach(opt => {
     opt.classList.toggle('selected', opt.dataset.color === USER.color);
   });
@@ -1269,26 +1224,48 @@ function closeSettingsModal() {
   dom.settingsModal.classList.add('hidden');
 }
 
-function saveSettings() {
+async function saveSettings() {
   const newNickname = dom.changeNicknameInput.value.trim();
+  const newBio = (dom.changeBioInput?.value || '').trim().slice(0, 100);
 
   if (newNickname.length < 2 || newNickname.length > 20) {
     showToast('닉네임은 2~20자 이내여야 합니다.', 'error');
     return;
   }
 
+  // 프로필 사진 업로드
+  const avatarFile = dom.avatarInput?.files?.[0];
+  if (avatarFile) {
+    const formData = new FormData();
+    formData.append('avatar', avatarFile);
+    try {
+      const res = await fetch('/api/upload/avatar', { method: 'POST', body: formData });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      USER.avatarUrl = data.url;
+      localStorage.setItem('avatarUrl', data.url);
+    } catch {
+      showToast('프로필 사진 업로드에 실패했습니다.', 'error');
+      return;
+    }
+  }
+
   const oldNickname = USER.nickname;
   USER.nickname = newNickname;
+  USER.bio = newBio;
   localStorage.setItem('nickname', newNickname);
   localStorage.setItem('color', USER.color);
+  localStorage.setItem('bio', newBio);
 
   if (oldNickname !== newNickname) {
     socket.emit('updateNickname', { oldNickname, newNickname });
   }
 
+  socket.emit('updateProfile', { avatarUrl: USER.avatarUrl, bio: USER.bio });
+
   updateProfileUI();
   closeSettingsModal();
-  showToast('설정이 저장되었습니다! ✅', 'success');
+  showToast('프로필이 저장되었습니다!', 'success');
 }
 
 // =============================================
@@ -1319,14 +1296,12 @@ function buildEmojiPicker() {
 }
 
 function toggleEmojiPicker() {
-  const picker = $('emojiPicker');
-  picker.classList.toggle('hidden');
+  $('emojiPicker').classList.toggle('hidden');
   $('emojiPickerChat').classList.add('hidden');
 }
 
 function toggleEmojiPickerChat() {
-  const picker = $('emojiPickerChat');
-  picker.classList.toggle('hidden');
+  $('emojiPickerChat').classList.toggle('hidden');
   $('emojiPicker').classList.add('hidden');
 }
 
@@ -1342,7 +1317,6 @@ function insertEmoji(emoji, pickerId) {
   $(pickerId).classList.add('hidden');
 }
 
-// 이모지 피커 외부 클릭 시 닫기
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.emoji-toggle') && !e.target.closest('.emoji-toggle-chat')) {
     $('emojiPicker')?.classList.add('hidden');
@@ -1361,10 +1335,8 @@ function toggleSidebar() {
 }
 
 function closeSidebar() {
-  const sidebar = document.querySelector('.sidebar');
-  const overlay = document.querySelector('.sidebar-overlay');
-  if (sidebar) sidebar.classList.remove('open');
-  if (overlay) overlay.classList.remove('show');
+  document.querySelector('.sidebar')?.classList.remove('open');
+  document.querySelector('.sidebar-overlay')?.classList.remove('show');
 }
 
 function getOrCreateOverlay() {
@@ -1405,7 +1377,6 @@ function sharePost(postId) {
 // =============================================
 function setupKeyboardShortcuts() {
   document.addEventListener('keydown', (e) => {
-    // ESC: 모달/이모지 닫기
     if (e.key === 'Escape') {
       closeImageModal();
       closeCreateRoomModal();
@@ -1413,18 +1384,12 @@ function setupKeyboardShortcuts() {
       $('emojiPicker')?.classList.add('hidden');
       $('emojiPickerChat')?.classList.add('hidden');
     }
-
-    // Ctrl+/ : 검색 포커스
     if (e.ctrlKey && e.key === '/') {
       e.preventDefault();
       dom.searchInput.focus();
     }
-
-    // Ctrl+Enter : 게시글 제출 (게시글 작성 중일 때)
     if (e.ctrlKey && e.key === 'Enter') {
-      if (document.activeElement === dom.postContent) {
-        submitPost();
-      }
+      if (document.activeElement === dom.postContent) submitPost();
     }
   });
 }
@@ -1439,16 +1404,13 @@ function showToast(message, type = 'info') {
     warning: 'fa-triangle-exclamation',
     info:    'fa-circle-info',
   };
-
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
   toast.innerHTML = `
     <i class="fa-solid ${icons[type]} toast-icon"></i>
     <span>${escHtml(message)}</span>
   `;
-
   dom.toastContainer.appendChild(toast);
-
   setTimeout(() => {
     toast.classList.add('toast-out');
     setTimeout(() => toast.remove(), 300);
@@ -1480,12 +1442,10 @@ function formatTime(isoString) {
   const now  = new Date();
   const date = new Date(isoString);
   const diff = Math.floor((now - date) / 1000);
-
-  if (diff < 60)  return '방금 전';
-  if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+  if (diff < 60)     return '방금 전';
+  if (diff < 3600)   return `${Math.floor(diff / 60)}분 전`;
+  if (diff < 86400)  return `${Math.floor(diff / 3600)}시간 전`;
   if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
-
   return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
 }
 
@@ -1497,7 +1457,6 @@ function formatFileSize(bytes) {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-// CSS fadeOut 애니메이션 추가
 const style = document.createElement('style');
 style.textContent = `@keyframes fadeOut { to { opacity:0; transform:scale(0.95); } }`;
 document.head.appendChild(style);

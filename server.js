@@ -1,10 +1,11 @@
 /**
- * server.js - 메인 서버 파일
- * Express + Socket.io 기반의 실시간 소셜 커뮤니티 서버
+ * server.js - 과천중 비밀게시판 메인 서버
+ * Express + Socket.io 기반의 실시간 커뮤니티 서버
  */
 
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const { Server } = require('socket.io');
 const multer = require('multer');
 const path = require('path');
@@ -14,65 +15,101 @@ const fs = require('fs');
 const app = express();
 const server = http.createServer(app);
 
-// Socket.io 초기화 (CORS 허용)
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
-  maxHttpBufferSize: 1e7 // 10MB
+  maxHttpBufferSize: 1e7
 });
 
 // =============================================
-// 인메모리 데이터 저장소
+// JSON 영구 저장소
 // =============================================
-let posts = [];            // 게시글 목록
-let comments = {};         // { postId: [댓글 배열] }
-let likes = {};            // { postId: [userId 배열] }
-let onlineUsers = {};      // { socketId: 유저 정보 }
-let globalMessages = [];   // 전체 채팅 메시지
-let directMessages = {};   // { roomKey: [메시지 배열] }
-let groupRooms = {};       // { roomId: 방 정보 }
+const DATA_DIR = path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
+
+function loadJSON(filename, fallback) {
+  const filepath = path.join(DATA_DIR, filename);
+  try {
+    if (fs.existsSync(filepath)) {
+      return JSON.parse(fs.readFileSync(filepath, 'utf-8'));
+    }
+  } catch (e) {
+    console.error(`[데이터 로드 오류] ${filename}:`, e.message);
+  }
+  return fallback;
+}
+
+function saveJSON(filename, data) {
+  const filepath = path.join(DATA_DIR, filename);
+  try {
+    fs.writeFileSync(filepath, JSON.stringify(data), 'utf-8');
+  } catch (e) {
+    console.error(`[데이터 저장 오류] ${filename}:`, e.message);
+  }
+}
+
+// 서버 시작 시 데이터 로드
+let posts = loadJSON('posts.json', []);
+let comments = loadJSON('comments.json', {});
+let likes = loadJSON('likes.json', {});
+
+// 인메모리 데이터
+let onlineUsers = {};
+let globalMessages = [];
+let directMessages = {};
+let groupRooms = {};
+
+function savePosts() { saveJSON('posts.json', posts); }
+function saveComments() { saveJSON('comments.json', comments); }
+function saveLikes() { saveJSON('likes.json', likes); }
 
 // =============================================
-// 미들웨어 설정
+// 미들웨어
 // =============================================
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static('public'));
 app.use('/uploads', express.static('uploads'));
 
-// uploads 폴더 없으면 생성
 if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
+if (!fs.existsSync('uploads/avatars')) fs.mkdirSync('uploads/avatars');
 
 // =============================================
-// Multer 파일 업로드 설정
+// Multer 설정
 // =============================================
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
   filename: (req, file, cb) => {
     const safeName = file.originalname.replace(/[^a-zA-Z0-9.\-_가-힣]/g, '_');
-    cb(null, `${Date.now()}-${uuidv4().slice(0,8)}-${safeName}`);
+    cb(null, `${Date.now()}-${uuidv4().slice(0, 8)}-${safeName}`);
+  }
+});
+
+const avatarStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, 'uploads/avatars/'),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `avatar-${Date.now()}-${uuidv4().slice(0, 8)}${ext}`);
   }
 });
 
 const fileFilter = (req, file, cb) => {
   const allowed = /jpeg|jpg|png|gif|webp|mp4|pdf|txt|zip|doc|docx|mp3/;
-  if (allowed.test(path.extname(file.originalname).toLowerCase())) {
-    cb(null, true);
-  } else {
-    cb(new Error('허용되지 않는 파일 형식입니다.'));
-  }
+  if (allowed.test(path.extname(file.originalname).toLowerCase())) cb(null, true);
+  else cb(new Error('허용되지 않는 파일 형식입니다.'));
 };
 
-const upload = multer({
-  storage,
-  fileFilter,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB 제한
-});
+const imageFilter = (req, file, cb) => {
+  const allowed = /jpeg|jpg|png|gif|webp/;
+  if (allowed.test(path.extname(file.originalname).toLowerCase())) cb(null, true);
+  else cb(new Error('이미지 파일만 업로드 가능합니다.'));
+};
+
+const upload = multer({ storage, fileFilter, limits: { fileSize: 10 * 1024 * 1024 } });
+const uploadAvatar = multer({ storage: avatarStorage, fileFilter: imageFilter, limits: { fileSize: 3 * 1024 * 1024 } });
 
 // =============================================
-// API 라우트 - 게시글
+// API - 게시글
 // =============================================
-
-// 게시글 목록 조회 (페이지네이션 + 검색)
 app.get('/api/posts', (req, res) => {
   try {
     const { search = '', page = 1, limit = 10 } = req.query;
@@ -105,23 +142,21 @@ app.get('/api/posts', (req, res) => {
   }
 });
 
-// 게시글 작성
 app.post('/api/posts', upload.array('files', 5), (req, res) => {
   try {
-    const { content, author, authorId, authorColor } = req.body;
+    const { content, author, authorId, authorColor, authorAvatar } = req.body;
 
     if (!content?.trim() && (!req.files || req.files.length === 0)) {
       return res.status(400).json({ error: '내용 또는 파일이 필요합니다.' });
     }
 
-    const sanitizedContent = (content || '').slice(0, 2000);
-
     const post = {
       id: uuidv4(),
-      content: sanitizedContent,
+      content: (content || '').slice(0, 2000),
       author: (author || '익명').slice(0, 30),
       authorId: authorId || 'unknown',
-      authorColor: authorColor || '#667eea',
+      authorColor: authorColor || '#2563eb',
+      authorAvatar: authorAvatar || null,
       files: (req.files || []).map(f => ({
         filename: f.filename,
         originalname: f.originalname,
@@ -136,16 +171,18 @@ app.post('/api/posts', upload.array('files', 5), (req, res) => {
     likes[post.id] = [];
     comments[post.id] = [];
 
+    savePosts();
+    saveLikes();
+    saveComments();
+
     const postData = { ...post, likeCount: 0, commentCount: 0 };
     io.emit('newPost', postData);
-
     res.json(postData);
   } catch (err) {
     res.status(500).json({ error: '게시글 작성 실패: ' + err.message });
   }
 });
 
-// 게시글 삭제
 app.delete('/api/posts/:id', (req, res) => {
   try {
     const { id } = req.params;
@@ -157,7 +194,6 @@ app.delete('/api/posts/:id', (req, res) => {
     const post = posts[idx];
     if (post.authorId !== authorId) return res.status(403).json({ error: '권한이 없습니다.' });
 
-    // 업로드된 파일 삭제
     post.files.forEach(f => {
       const fp = path.join('uploads', f.filename);
       if (fs.existsSync(fp)) fs.unlinkSync(fp);
@@ -167,6 +203,10 @@ app.delete('/api/posts/:id', (req, res) => {
     delete likes[id];
     delete comments[id];
 
+    savePosts();
+    saveLikes();
+    saveComments();
+
     io.emit('deletePost', id);
     res.json({ success: true });
   } catch (err) {
@@ -175,19 +215,16 @@ app.delete('/api/posts/:id', (req, res) => {
 });
 
 // =============================================
-// API 라우트 - 댓글
+// API - 댓글
 // =============================================
-
-// 댓글 조회
 app.get('/api/posts/:id/comments', (req, res) => {
   res.json(comments[req.params.id] || []);
 });
 
-// 댓글 작성
 app.post('/api/posts/:id/comments', (req, res) => {
   try {
     const { id } = req.params;
-    const { content, author, authorId, authorColor } = req.body;
+    const { content, author, authorId, authorColor, authorAvatar } = req.body;
 
     if (!content?.trim()) return res.status(400).json({ error: '댓글 내용이 필요합니다.' });
     if (!posts.find(p => p.id === id)) return res.status(404).json({ error: '게시글 없음' });
@@ -200,11 +237,13 @@ app.post('/api/posts/:id/comments', (req, res) => {
       content: content.slice(0, 500),
       author: (author || '익명').slice(0, 30),
       authorId: authorId || 'unknown',
-      authorColor: authorColor || '#667eea',
+      authorColor: authorColor || '#2563eb',
+      authorAvatar: authorAvatar || null,
       createdAt: new Date().toISOString()
     };
 
     comments[id].push(comment);
+    saveComments();
 
     io.emit('newComment', comment);
     res.json(comment);
@@ -214,7 +253,7 @@ app.post('/api/posts/:id/comments', (req, res) => {
 });
 
 // =============================================
-// API 라우트 - 좋아요
+// API - 좋아요
 // =============================================
 app.post('/api/posts/:id/like', (req, res) => {
   try {
@@ -228,6 +267,8 @@ app.post('/api/posts/:id/like', (req, res) => {
     if (liked) likes[id].push(userId);
     else likes[id].splice(idx, 1);
 
+    saveLikes();
+
     const update = { postId: id, likeCount: likes[id].length, userId, liked };
     io.emit('likeUpdate', update);
     res.json(update);
@@ -237,7 +278,7 @@ app.post('/api/posts/:id/like', (req, res) => {
 });
 
 // =============================================
-// API 라우트 - 파일 업로드 (채팅용)
+// API - 파일 업로드
 // =============================================
 app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: '파일이 없습니다.' });
@@ -250,44 +291,61 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   });
 });
 
+// 프로필 사진 업로드
+app.post('/api/upload/avatar', uploadAvatar.single('avatar'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: '이미지 파일이 없습니다.' });
+  res.json({
+    url: `/uploads/avatars/${req.file.filename}`
+  });
+});
+
 // =============================================
-// Socket.io 이벤트 처리
+// Socket.io 이벤트
 // =============================================
 io.on('connection', (socket) => {
   console.log(`[연결] ${socket.id}`);
 
+  // 닉네임 중복 확인
+  socket.on('checkNickname', ({ nickname }) => {
+    const taken = Object.values(onlineUsers).some(u => u.nickname === nickname);
+    socket.emit('nicknameResult', { available: !taken, nickname });
+  });
+
   // 사용자 입장
   socket.on('userJoin', (userData) => {
+    const nickname = userData.nickname || '익명';
+
+    // 닉네임 중복 차단
+    const taken = Object.values(onlineUsers).some(u => u.nickname === nickname);
+    if (taken) {
+      socket.emit('nicknameTaken', { nickname });
+      return;
+    }
+
     onlineUsers[socket.id] = {
       socketId: socket.id,
-      nickname: userData.nickname || '익명',
+      nickname,
       userId: userData.userId || socket.id,
-      color: userData.color || '#667eea',
+      color: userData.color || '#2563eb',
+      avatarUrl: userData.avatarUrl || null,
+      bio: (userData.bio || '').slice(0, 100),
       joinedAt: new Date().toISOString()
     };
 
-    // 전체 채팅방 입장
     socket.join('global');
-
-    // 현재 온라인 유저 목록 전송
     io.emit('onlineUsers', Object.values(onlineUsers));
-
-    // 입장 알림
     io.emit('systemMessage', {
       type: 'join',
-      nickname: onlineUsers[socket.id].nickname,
-      message: `${onlineUsers[socket.id].nickname}님이 입장하셨습니다.`,
+      nickname,
+      message: `${nickname}님이 입장하셨습니다.`,
       createdAt: new Date().toISOString()
     });
 
-    // 그룹 방 목록 전송
     socket.emit('groupRooms', Object.values(groupRooms));
-
-    // 전체 채팅 히스토리 전송 (최근 50개)
     socket.emit('globalHistory', globalMessages.slice(-50));
   });
 
-  // 닉네임 변경
+  // 닉네임/프로필 업데이트
   socket.on('updateNickname', ({ newNickname }) => {
     if (onlineUsers[socket.id]) {
       const old = onlineUsers[socket.id].nickname;
@@ -301,7 +359,15 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ─── 전체 채팅 ───────────────────────────────
+  socket.on('updateProfile', ({ avatarUrl, bio }) => {
+    if (onlineUsers[socket.id]) {
+      if (avatarUrl !== undefined) onlineUsers[socket.id].avatarUrl = avatarUrl;
+      if (bio !== undefined) onlineUsers[socket.id].bio = (bio || '').slice(0, 100);
+      io.emit('onlineUsers', Object.values(onlineUsers));
+    }
+  });
+
+  // 전체 채팅
   socket.on('globalMessage', (data) => {
     const user = onlineUsers[socket.id];
     if (!user) return;
@@ -312,6 +378,7 @@ io.on('connection', (socket) => {
       author: user.nickname,
       authorId: user.userId,
       authorColor: user.color,
+      authorAvatar: user.avatarUrl || null,
       socketId: socket.id,
       file: data.file || null,
       createdAt: new Date().toISOString()
@@ -319,11 +386,10 @@ io.on('connection', (socket) => {
 
     globalMessages.push(msg);
     if (globalMessages.length > 200) globalMessages.shift();
-
     io.emit('globalMessage', msg);
   });
 
-  // ─── 1:1 다이렉트 메시지 ──────────────────────
+  // 1:1 다이렉트 메시지
   socket.on('directMessage', (data) => {
     const { toSocketId, content, file } = data;
     const user = onlineUsers[socket.id];
@@ -335,6 +401,7 @@ io.on('connection', (socket) => {
       toSocketId,
       fromNickname: user.nickname,
       fromColor: user.color,
+      fromAvatar: user.avatarUrl || null,
       content: (content || '').slice(0, 1000),
       file: file || null,
       createdAt: new Date().toISOString()
@@ -346,11 +413,9 @@ io.on('connection', (socket) => {
     if (directMessages[roomKey].length > 200) directMessages[roomKey].shift();
 
     socket.emit('directMessage', msg);
-    const targetSocket = io.sockets.sockets.get(toSocketId);
-    if (targetSocket) io.to(toSocketId).emit('directMessage', msg);
+    if (io.sockets.sockets.get(toSocketId)) io.to(toSocketId).emit('directMessage', msg);
   });
 
-  // DM 히스토리 요청
   socket.on('getDMHistory', ({ otherSocketId }) => {
     const roomKey = [socket.id, otherSocketId].sort().join('__');
     socket.emit('dmHistory', {
@@ -359,7 +424,7 @@ io.on('connection', (socket) => {
     });
   });
 
-  // ─── 그룹 채팅방 ────────────────────────────────
+  // 그룹 채팅방
   socket.on('createGroupRoom', ({ name }) => {
     const user = onlineUsers[socket.id];
     if (!user) return;
@@ -386,15 +451,8 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     if (!room.members.includes(socket.id)) room.members.push(socket.id);
 
-    socket.emit('groupRoomHistory', {
-      roomId,
-      messages: room.messages.slice(-50)
-    });
-
-    io.to(roomId).emit('groupRoomMemberUpdate', {
-      roomId,
-      memberCount: room.members.length
-    });
+    socket.emit('groupRoomHistory', { roomId, messages: room.messages.slice(-50) });
+    io.to(roomId).emit('groupRoomMemberUpdate', { roomId, memberCount: room.members.length });
   });
 
   socket.on('groupMessage', (data) => {
@@ -410,6 +468,7 @@ io.on('connection', (socket) => {
       author: user.nickname,
       authorId: user.userId,
       authorColor: user.color,
+      authorAvatar: user.avatarUrl || null,
       socketId: socket.id,
       file: file || null,
       createdAt: new Date().toISOString()
@@ -417,31 +476,21 @@ io.on('connection', (socket) => {
 
     room.messages.push(msg);
     if (room.messages.length > 200) room.messages.shift();
-
     io.to(roomId).emit('groupMessage', msg);
   });
 
-  // ─── 타이핑 인디케이터 ────────────────────────
+  // 타이핑 인디케이터
   socket.on('typing', ({ channel, roomId }) => {
     const user = onlineUsers[socket.id];
     if (!user) return;
-    socket.broadcast.emit('userTyping', {
-      socketId: socket.id,
-      nickname: user.nickname,
-      channel,
-      roomId
-    });
+    socket.broadcast.emit('userTyping', { socketId: socket.id, nickname: user.nickname, channel, roomId });
   });
 
   socket.on('stopTyping', ({ channel, roomId }) => {
-    socket.broadcast.emit('userStopTyping', {
-      socketId: socket.id,
-      channel,
-      roomId
-    });
+    socket.broadcast.emit('userStopTyping', { socketId: socket.id, channel, roomId });
   });
 
-  // ─── 연결 해제 ───────────────────────────────
+  // 연결 해제
   socket.on('disconnect', () => {
     const user = onlineUsers[socket.id];
     delete onlineUsers[socket.id];
@@ -459,16 +508,31 @@ io.on('connection', (socket) => {
 });
 
 // =============================================
+// Render Keep-Alive (14분마다 자기 자신 핑)
+// =============================================
+if (process.env.RENDER_EXTERNAL_URL) {
+  setInterval(() => {
+    https.get(process.env.RENDER_EXTERNAL_URL, (res) => {
+      console.log(`[Keep-Alive] 핑 완료 (${res.statusCode})`);
+    }).on('error', (e) => {
+      console.error('[Keep-Alive] 오류:', e.message);
+    });
+  }, 14 * 60 * 1000);
+  console.log('[Keep-Alive] 14분 간격 자동 핑 활성화');
+}
+
+// =============================================
 // 서버 시작
 // =============================================
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n✨ MySocialSite 서버 시작!`);
-  console.log(`📡 로컬 접속: http://localhost:${PORT}`);
-  console.log(`🌐 네트워크 접속: http://<내 IP>:${PORT}\n`);
+  console.log(`\n ====================================`);
+  console.log(`  과천중 비밀게시판 서버 시작!`);
+  console.log(`  로컬: http://localhost:${PORT}`);
+  console.log(` ====================================\n`);
+  console.log(`[데이터] 게시글 ${posts.length}개 로드됨`);
 });
 
-// 오류 처리
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
 });
