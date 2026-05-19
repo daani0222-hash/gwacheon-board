@@ -527,6 +527,7 @@ app.post('/api/posts/:id/recommend', (req, res) => {
 // =============================================
 app.post('/api/admin/verify', (req, res) => {
   const { password } = req.body;
+  console.log(`[Admin] 입력 길이:${(password||'').length} / 서버 길이:${ADMIN_PASSWORD.length} / 일치:${isAdmin(password)}`);
   if (isAdmin(password)) res.json({ success: true });
   else res.status(401).json({ error: '비밀번호가 틀렸습니다.' });
 });
