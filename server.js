@@ -255,7 +255,7 @@ function enrichTop10(top10) {
 // =============================================
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '관리자1234';
 
-function isAdmin(pw) { return pw === ADMIN_PASSWORD; }
+function isAdmin(pw) { return (pw || '').trim() === (ADMIN_PASSWORD || '').trim(); }
 function isHoFWinner(userId) {
   return rankingsData.hallOfFame && rankingsData.hallOfFame.userId === userId;
 }
