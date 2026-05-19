@@ -1673,3 +1673,330 @@ input::placeholder, textarea::placeholder { color: var(--text-4); }
    접근성
    ============================================= */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* =============================================
+   섹션 헤더 (랭킹 뷰 공용)
+   ============================================= */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.hof-section, .ranking-section { margin-bottom: 20px; }
+
+/* =============================================
+   명예의전당 카드
+   ============================================= */
+.hof-card-placeholder {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  padding: 24px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.hof-card {
+  background: linear-gradient(135deg,#fffbeb 0%,#fef3c7 40%,#fff7ed 100%);
+  border: 2px solid #f59e0b;
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 4px 16px rgba(245,158,11,.15);
+}
+
+.hof-card.diamond {
+  background: linear-gradient(135deg,#eff6ff 0%,#dbeafe 40%,#e0f2fe 100%);
+  border-color: #3b82f6;
+  box-shadow: 0 4px 16px rgba(59,130,246,.2);
+}
+
+.hof-card.legend {
+  background: linear-gradient(135deg,#fdf4ff 0%,#fae8ff 40%,#f0fdf4 100%);
+  border-color: #a21caf;
+  box-shadow: 0 4px 20px rgba(162,28,175,.25);
+}
+
+.hof-avatar-wrap { position: relative; flex-shrink: 0; }
+
+.hof-avatar {
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px; font-weight: 700; color: #fff;
+  overflow: hidden;
+  border: 3px solid #f59e0b;
+}
+
+.hof-crown {
+  position: absolute;
+  top: -12px; left: 50%;
+  transform: translateX(-50%);
+  font-size: 20px;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,.2));
+}
+
+.hof-info { flex: 1; }
+
+.hof-nickname {
+  font-size: 20px; font-weight: 800; letter-spacing: -.3px;
+  background: linear-gradient(90deg,#d97706,#f59e0b,#eab308);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hof-title { font-size: 13px; font-weight: 600; color: var(--text-2); margin-top: 2px; }
+
+.hof-meta {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 8px; flex-wrap: wrap;
+}
+
+.hof-stat { font-size: 12px; color: var(--text-3); display: flex; align-items: center; gap: 4px; }
+.hof-stat strong { color: var(--text-1); font-size: 13px; }
+
+.hof-like-breakdown { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+
+.hof-like-tag {
+  font-size: 11px;
+  background: rgba(255,255,255,.7);
+  border: 1px solid rgba(245,158,11,.3);
+  border-radius: 12px;
+  padding: 2px 8px;
+  color: var(--text-2);
+}
+
+/* =============================================
+   TOP 10 랭킹 리스트
+   ============================================= */
+.ranking-list {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  overflow: hidden;
+}
+
+.ranking-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  transition: var(--tr);
+}
+
+.ranking-item:last-child { border-bottom: none; }
+.ranking-item:hover { background: var(--bg-hover); }
+
+.ranking-item.rank-1 { background: linear-gradient(90deg,#fffbeb,#fff); }
+.ranking-item.rank-2 { background: linear-gradient(90deg,#f8fafc,#fff); }
+.ranking-item.rank-3 { background: linear-gradient(90deg,#fff7ed,#fff); }
+
+.rank-num { width: 28px; text-align: center; font-size: 16px; font-weight: 800; flex-shrink: 0; }
+.rank-num.gold   { color: #f59e0b; }
+.rank-num.silver { color: #6b7280; }
+.rank-num.bronze { color: #d97706; }
+.rank-num.normal { color: var(--text-3); font-size: 13px; }
+
+.ranking-user-info { flex: 1; min-width: 0; }
+
+.ranking-nickname {
+  font-size: 14px; font-weight: 700;
+  display: flex; align-items: center; gap: 6px;
+}
+
+.ranking-nickname.golden-name {
+  background: linear-gradient(90deg,#d97706,#f59e0b,#eab308);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.ranking-title { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+
+.ranking-likes {
+  font-size: 13px; font-weight: 700; color: var(--text-2);
+  display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+}
+
+.rank-badge-chip { font-size: 14px; flex-shrink: 0; }
+
+/* =============================================
+   게시글 — 랭킹 강조 효과
+   ============================================= */
+.post-card.rank-1-post {
+  border-left: 3px solid #f59e0b;
+  background: linear-gradient(90deg,rgba(245,158,11,.04),var(--bg-card));
+}
+
+.post-card.rank-2-post { border-left: 3px solid #9ca3af; }
+.post-card.rank-3-post { border-left: 3px solid #d97706; }
+.post-card.rank-top10-post { border-left: 3px solid #3b82f6; }
+
+.post-card.diamond-post {
+  border: 2px solid #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59,130,246,.15), var(--shadow);
+}
+
+.post-card.legend-post {
+  border: 2px solid #a21caf;
+  box-shadow: 0 0 0 2px rgba(162,28,175,.15), var(--shadow);
+}
+
+.post-card.announcement-post {
+  border-left: 4px solid var(--red);
+  background: linear-gradient(90deg,rgba(220,38,38,.04),var(--bg-card));
+}
+
+.nick-badge { font-size: 13px; display: inline-flex; align-items: center; margin-left: 2px; }
+
+.post-author-name.golden-name {
+  background: linear-gradient(90deg,#d97706,#f59e0b,#eab308);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* =============================================
+   다중 좋아요 버튼
+   ============================================= */
+.like-types-row { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+
+.like-type-btn {
+  display: flex; align-items: center; gap: 3px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 500;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: var(--tr);
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.like-type-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+  border-color: var(--border);
+}
+
+.like-type-btn.active {
+  background: rgba(37,99,235,.08);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.like-type-btn .lt-emoji { font-size: 14px; }
+.like-type-btn .lt-count { font-size: 11px; font-weight: 600; }
+
+/* =============================================
+   추천글 배너 / 고정 게시글
+   ============================================= */
+.recommended-banner {
+  background: linear-gradient(90deg,#fffbeb,#fef3c7);
+  border: 1px solid #f59e0b;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px; font-weight: 600;
+  color: #92400e;
+}
+
+.recommended-banner i { color: #f59e0b; }
+
+.pinned-post-area {
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(37,99,235,.04);
+}
+
+/* =============================================
+   관리자 패널
+   ============================================= */
+.admin-modal { max-width: 500px !important; max-height: 85vh; overflow-y: auto; }
+
+.admin-section {
+  margin-top: 14px;
+  padding: 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.admin-section-title {
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .5px;
+  color: var(--text-3);
+  margin-bottom: 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+
+.admin-user-list {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 140px; overflow-y: auto;
+}
+
+.admin-user-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+
+.admin-user-name { flex: 1; font-weight: 600; }
+.admin-user-sid  { color: var(--text-4); font-size: 10px; font-family: monospace; }
+
+/* =============================================
+   프로필 — 배지·칭호·HoF 전용 권한
+   ============================================= */
+.profile-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.profile-badge-display { font-size: 22px; }
+
+.profile-title-display {
+  font-size: 13px; font-weight: 600;
+  color: var(--accent);
+  margin-top: 2px;
+}
+
+.hof-powers {
+  margin-top: 12px;
+  padding: 12px;
+  background: linear-gradient(135deg,#fffbeb,#fef3c7);
+  border: 1px solid #f59e0b;
+  border-radius: var(--radius-sm);
+}
+
+.hof-powers-title {
+  font-size: 12px; font-weight: 700;
+  color: #92400e;
+  margin-bottom: 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+
+.hof-power-buttons { display: flex; flex-wrap: wrap; gap: 6px; }

@@ -32,6 +32,8 @@ const socket = io({ transports: ['websocket', 'polling'] });
 // =============================================
 // 앱 상태
 // =============================================
+const LIKE_TYPES = ['👍', '😂', '🧠', '💀'];
+
 const state = {
   currentView:    'home',
   currentChannel: 'global',
@@ -48,7 +50,11 @@ const state = {
   unreadDM:       {},
   unreadGroup:    {},
   typingTimers:   {},
-  likedPosts:     JSON.parse(localStorage.getItem('likedPosts') || '{}'),
+  likedTypes:     JSON.parse(localStorage.getItem('likedTypes') || '{}'), // { postId: 'type' | null }
+  rankingsData:   { top10: [], hallOfFame: null, pinnedPostId: null, recommendedPostId: null, week: '' },
+  adminPw:        '',
+  adminVerified:  false,
+  logoClickCount: 0,
 };
 
 // =============================================
@@ -108,6 +114,13 @@ const dom = {
   avatarInput:     $('avatarInput'),
   settingsAvatarPreview: $('settingsAvatarPreview'),
   toastContainer:  $('toastContainer'),
+  recommendedBanner: $('recommendedBanner'),
+  pinnedPostArea:  $('pinnedPostArea'),
+  profileBadge:    $('profileBadge'),
+  profileTitle:    $('profileTitle'),
+  likeBreakdownDetail: $('likeBreakdownDetail'),
+  hofPowers:       $('hofPowers'),
+  hofPowerButtons: $('hofPowerButtons'),
 };
 
 // =============================================
@@ -159,7 +172,6 @@ function bindEvents() {
     if (e.key === 'Enter') handleSetNickname();
   });
 
-  // 닉네임 중복 확인 결과 (startApp 전에 등록)
   socket.on('nicknameResult', ({ available, nickname }) => {
     if (available) {
       USER.nickname = nickname;
@@ -186,7 +198,6 @@ function bindEvents() {
   dom.fileInput.addEventListener('change', handleFileSelect);
   dom.chatFileInput.addEventListener('change', handleChatFileSelect);
 
-  // 아바타 미리보기
   dom.avatarInput && dom.avatarInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file || !dom.settingsAvatarPreview) return;
@@ -234,6 +245,18 @@ function bindEvents() {
       USER.color = opt.dataset.color;
     });
   });
+
+  // 로고 5번 클릭 → 관리자 패널
+  const logoEl = $('sidebarLogo');
+  if (logoEl) {
+    logoEl.addEventListener('click', () => {
+      state.logoClickCount = (state.logoClickCount || 0) + 1;
+      if (state.logoClickCount >= 5) {
+        state.logoClickCount = 0;
+        openAdminModal();
+      }
+    });
+  }
 }
 
 // =============================================
@@ -273,6 +296,35 @@ function avatarHtml(avatarUrl, color, name, sizeClass = 'sm') {
     </div>`;
   }
   return `<div class="avatar ${sizeClass} no-status" style="background:${color || '#2563eb'}">${initials}</div>`;
+}
+
+// =============================================
+// 랭킹 헬퍼
+// =============================================
+function getRankedUser(authorId) {
+  return (state.rankingsData.top10 || []).find(u => u.userId === authorId);
+}
+
+function getPostRankClass(authorId) {
+  const ranked = getRankedUser(authorId);
+  if (!ranked) return '';
+  const cons = ranked.consecutiveWins || 0;
+  if (cons >= 3) return 'legend-post';
+  if (cons >= 2) return 'diamond-post';
+  if (ranked.rank === 1) return 'rank-1-post';
+  if (ranked.rank === 2) return 'rank-2-post';
+  if (ranked.rank === 3) return 'rank-3-post';
+  return 'rank-top10-post';
+}
+
+function getAuthorBadge(authorId) {
+  const ranked = getRankedUser(authorId);
+  return ranked ? (ranked.badge || '') : '';
+}
+
+function isGoldenAuthor(authorId) {
+  const ranked = getRankedUser(authorId);
+  return ranked && ranked.rank === 1;
 }
 
 // =============================================
@@ -324,8 +376,31 @@ function connectSocket() {
     }
   });
 
-  socket.on('likeUpdate', ({ postId, likeCount, userId, liked }) => {
-    updateLikeUI(postId, likeCount, userId, liked);
+  socket.on('likeUpdate', ({ postId, breakdown, totalLikes, userId, liked, type }) => {
+    updateLikeUI(postId, breakdown, totalLikes, userId, liked, type);
+  });
+
+  socket.on('rankingsUpdate', (top10) => {
+    state.rankingsData.top10 = top10 || [];
+  });
+
+  socket.on('adminWarning', ({ message }) => {
+    $('warningText').textContent = message;
+    $('warningModal').classList.remove('hidden');
+  });
+
+  socket.on('announcement', ({ message }) => {
+    showToast(`📢 공지: ${message.slice(0, 60)}${message.length > 60 ? '...' : ''}`, 'warning');
+  });
+
+  socket.on('pinnedPost', ({ postId }) => {
+    state.rankingsData.pinnedPostId = postId;
+    renderPinnedBanner();
+  });
+
+  socket.on('recommendedPost', ({ postId }) => {
+    state.rankingsData.recommendedPostId = postId;
+    renderRecommendedBanner();
   });
 
   socket.on('globalHistory', (messages) => {
@@ -457,6 +532,12 @@ async function loadPosts(append = false) {
     const res = await fetch(`/api/posts?${params}`);
     const data = await res.json();
 
+    // 핀된/추천글 정보 업데이트
+    if (data.pinnedPostId !== undefined) state.rankingsData.pinnedPostId = data.pinnedPostId;
+    if (data.recommendedPostId !== undefined) state.rankingsData.recommendedPostId = data.recommendedPostId;
+    renderPinnedBanner();
+    renderRecommendedBanner();
+
     if (!append) dom.postFeed.innerHTML = '';
 
     if (data.posts.length === 0 && !append) {
@@ -489,25 +570,78 @@ function resetAndLoadPosts() {
 }
 
 // =============================================
+// 추천글 / 고정글 배너
+// =============================================
+function renderPinnedBanner() {
+  const pid = state.rankingsData.pinnedPostId;
+  if (!dom.pinnedPostArea) return;
+  if (pid) {
+    dom.pinnedPostArea.classList.remove('hidden');
+    dom.pinnedPostArea.innerHTML = `<i class="fa-solid fa-thumbtack"></i> <span>📌 고정 게시글이 있습니다</span>`;
+  } else {
+    dom.pinnedPostArea.classList.add('hidden');
+  }
+}
+
+function renderRecommendedBanner() {
+  const rid = state.rankingsData.recommendedPostId;
+  if (!dom.recommendedBanner) return;
+  if (rid) {
+    dom.recommendedBanner.classList.remove('hidden');
+    dom.recommendedBanner.innerHTML = `<i class="fa-solid fa-star"></i> <span>⭐ 오늘의 추천글이 선정되었습니다</span>`;
+  } else {
+    dom.recommendedBanner.classList.add('hidden');
+  }
+}
+
+// =============================================
 // 게시글 요소 생성
 // =============================================
 function createPostElement(post) {
   const isOwner = post.authorId === USER.id;
-  const isLiked = state.likedPosts[post.id];
+  const myType  = state.likedTypes[post.id] || null;
   const timeAgo = formatTime(post.createdAt);
-  const imagesHtml = buildImagesHtml(post.files);
-  const filesHtml  = buildFilesHtml(post.files);
+  const imagesHtml = buildImagesHtml(post.files || []);
+  const filesHtml  = buildFilesHtml(post.files || []);
+  const breakdown  = post.likeBreakdown || {};
+  const totalLikes = post.likeCount || 0;
+
+  // 랭킹 스타일
+  const rankClass = post.authorId === 'admin'
+    ? (post.isAnnouncement ? 'announcement-post' : '')
+    : getPostRankClass(post.authorId);
+
+  const badge      = post.authorId === 'admin' ? '' : getAuthorBadge(post.authorId);
+  const isGolden   = post.authorId !== 'admin' && isGoldenAuthor(post.authorId);
+  const isPinned   = state.rankingsData.pinnedPostId === post.id;
+  const isRecommended = state.rankingsData.recommendedPostId === post.id;
+
+  // 좋아요 버튼들
+  const likeButtons = LIKE_TYPES.map(t => {
+    const cnt = breakdown[t] || 0;
+    const active = myType === t ? 'active' : '';
+    return `<button class="like-type-btn ${active}" data-like-type="${t}"
+                    onclick="doLike('${post.id}','${t}')">
+      <span class="lt-emoji">${t}</span>
+      <span class="lt-count">${cnt}</span>
+    </button>`;
+  }).join('');
 
   const el = document.createElement('div');
-  el.className = 'post-card';
+  el.className = `post-card ${rankClass}`;
   el.setAttribute('data-post-id', post.id);
+
+  const pinIndicator = isPinned ? '<span style="color:var(--accent);font-size:11px;margin-left:4px">📌</span>' : '';
+  const recIndicator = isRecommended ? '<span style="color:#f59e0b;font-size:11px;margin-left:4px">⭐</span>' : '';
 
   el.innerHTML = `
     <div class="post-header">
       ${avatarHtml(post.authorAvatar, post.authorColor, post.author, 'sm')}
       <div class="post-author-info">
-        <div class="post-author-name">${escHtml(post.author)}</div>
-        <div class="post-time">${timeAgo}</div>
+        <div class="post-author-name ${isGolden ? 'golden-name' : ''}" style="${!isGolden ? `color:${post.authorColor||'var(--text-1)'}` : ''}">
+          ${escHtml(post.author)}${badge ? `<span class="nick-badge">${badge}</span>` : ''}${pinIndicator}${recIndicator}
+        </div>
+        <div class="post-time">${timeAgo}${post.isAnnouncement ? ' · <span style="color:var(--red);font-weight:700">📢 공지</span>' : ''}</div>
       </div>
       ${isOwner ? `
         <div class="post-menu">
@@ -521,11 +655,7 @@ function createPostElement(post) {
     ${imagesHtml}
     ${filesHtml}
     <div class="post-actions">
-      <button class="action-btn like-btn ${isLiked ? 'liked' : ''}"
-              onclick="toggleLike('${post.id}')">
-        <i class="${isLiked ? 'fa-solid' : 'fa-regular'} fa-heart"></i>
-        <span class="like-count">${post.likeCount || 0}</span>
-      </button>
+      <div class="like-types-row">${likeButtons}</div>
       <button class="action-btn" onclick="toggleComments('${post.id}')">
         <i class="fa-regular fa-comment"></i>
         <span class="comment-count">${post.commentCount || 0}</span>
@@ -637,34 +767,45 @@ async function deletePost(postId) {
 }
 
 // =============================================
-// 좋아요
+// 다중 좋아요
 // =============================================
-async function toggleLike(postId) {
+async function doLike(postId, type) {
   try {
     const res = await fetch(`/api/posts/${postId}/like`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: USER.id }),
+      body: JSON.stringify({ userId: USER.id, type }),
     });
     const data = await res.json();
-    state.likedPosts[postId] = data.liked;
-    localStorage.setItem('likedPosts', JSON.stringify(state.likedPosts));
+    if (data.liked) {
+      state.likedTypes[postId] = type;
+    } else {
+      delete state.likedTypes[postId];
+    }
+    localStorage.setItem('likedTypes', JSON.stringify(state.likedTypes));
   } catch {
     showToast('좋아요 처리에 실패했습니다.', 'error');
   }
 }
 
-function updateLikeUI(postId, likeCount, userId, liked) {
+function updateLikeUI(postId, breakdown, totalLikes, userId, liked, type) {
   const card = document.querySelector(`[data-post-id="${postId}"]`);
   if (!card) return;
-  const btn   = card.querySelector('.like-btn');
-  const icon  = btn.querySelector('i');
-  const count = btn.querySelector('.like-count');
-  const isMe  = userId === USER.id;
-  const currentLiked = isMe ? liked : btn.classList.contains('liked');
-  btn.classList.toggle('liked', currentLiked);
-  icon.className = currentLiked ? 'fa-solid fa-heart' : 'fa-regular fa-heart';
-  count.textContent = likeCount;
+
+  const isMe = userId === USER.id;
+  if (isMe) {
+    if (liked) state.likedTypes[postId] = type;
+    else delete state.likedTypes[postId];
+    localStorage.setItem('likedTypes', JSON.stringify(state.likedTypes));
+  }
+
+  const myType = state.likedTypes[postId] || null;
+  LIKE_TYPES.forEach(t => {
+    const btn = card.querySelector(`[data-like-type="${t}"]`);
+    if (!btn) return;
+    btn.querySelector('.lt-count').textContent = breakdown[t] || 0;
+    btn.classList.toggle('active', myType === t);
+  });
 }
 
 // =============================================
@@ -814,6 +955,104 @@ function setupInfiniteScroll() {
     }
   }, { threshold: 0.1 });
   observer.observe(dom.loadMoreTrigger);
+}
+
+// =============================================
+// 랭킹 뷰
+// =============================================
+async function loadRankings() {
+  try {
+    const res = await fetch('/api/rankings');
+    const data = await res.json();
+    state.rankingsData = { ...state.rankingsData, ...data };
+    renderRankings(data);
+  } catch {
+    showToast('랭킹 로딩 실패', 'error');
+  }
+}
+
+function renderRankings(data) {
+  const { week, top10, hallOfFame } = data;
+
+  // 주차 표시
+  const weekEl = $('rankingWeek');
+  if (weekEl) weekEl.textContent = week ? `(${week})` : '';
+
+  // 명예의전당 카드
+  const hofEl = $('hofCard');
+  if (hofEl) {
+    if (!hallOfFame) {
+      hofEl.className = 'hof-card-placeholder';
+      hofEl.innerHTML = `<p>아직 명예의 전당에 헌액된 사람이 없습니다.<br>주간 1위를 차지하면 헌액됩니다!</p>`;
+    } else {
+      const cons = hallOfFame.consecutiveWins || 1;
+      const hofClass = cons >= 3 ? 'legend' : cons >= 2 ? 'diamond' : '';
+      const crownEmoji = cons >= 3 ? '👑' : cons >= 2 ? '💎' : '🏆';
+      const bd = hallOfFame.likeBreakdown || {};
+      const bdHtml = Object.entries(bd)
+        .filter(([, v]) => v > 0)
+        .map(([k, v]) => `<span class="hof-like-tag">${k} ${v}</span>`)
+        .join('');
+
+      hofEl.className = `hof-card ${hofClass}`;
+      hofEl.innerHTML = `
+        <div class="hof-avatar-wrap">
+          <div class="hof-avatar" style="background:${hallOfFame.color || '#2563eb'}">
+            ${hallOfFame.avatarUrl
+              ? `<img src="${hallOfFame.avatarUrl}" style="width:100%;height:100%;object-fit:cover" />`
+              : getInitials(hallOfFame.nickname)}
+          </div>
+          <div class="hof-crown">${crownEmoji}</div>
+        </div>
+        <div class="hof-info">
+          <div class="hof-nickname">${escHtml(hallOfFame.nickname)}</div>
+          <div class="hof-title">${escHtml(hallOfFame.title || '')}</div>
+          <div class="hof-meta">
+            <span class="hof-stat">❤️ 총 <strong>${hallOfFame.totalLikes || 0}</strong>개 좋아요</span>
+            ${cons > 1 ? `<span class="hof-stat">🔥 <strong>${cons}연속</strong> 1위</span>` : ''}
+          </div>
+          ${bdHtml ? `<div class="hof-like-breakdown">${bdHtml}</div>` : ''}
+        </div>
+      `;
+    }
+  }
+
+  // TOP 10 리스트
+  const rankList = $('rankingList');
+  if (!rankList) return;
+
+  if (!top10 || top10.length === 0) {
+    rankList.innerHTML = `
+      <div class="empty-feed">
+        <div class="empty-feed-icon"><i class="fa-solid fa-trophy"></i></div>
+        <h3>이번주 랭킹 계산 중...</h3>
+        <p>게시글을 작성하고 좋아요를 받으면 랭킹에 오를 수 있어요!</p>
+      </div>`;
+    return;
+  }
+
+  rankList.innerHTML = top10.map(u => {
+    const isGolden = u.rank === 1;
+    const numClass = u.rank === 1 ? 'gold' : u.rank === 2 ? 'silver' : u.rank === 3 ? 'bronze' : 'normal';
+    const numDisplay = u.rank <= 3 ? ['🥇','🥈','🥉'][u.rank - 1] : u.rank;
+    const rowClass = u.rank <= 3 ? `rank-${u.rank}` : '';
+    const bd = u.likeBreakdown || {};
+    const bdStr = Object.entries(bd).filter(([,v]) => v > 0).map(([k,v]) => `${k}${v}`).join(' ');
+
+    return `
+      <div class="ranking-item ${rowClass}">
+        <div class="rank-num ${numClass}">${numDisplay}</div>
+        ${avatarHtml(u.avatarUrl, u.color, u.nickname, 'sm')}
+        <div class="ranking-user-info">
+          <div class="ranking-nickname ${isGolden ? 'golden-name' : ''}">
+            ${escHtml(u.nickname)}
+            ${u.badge ? `<span class="rank-badge-chip">${u.badge}</span>` : ''}
+          </div>
+          <div class="ranking-title">${escHtml(u.title || '')}${bdStr ? ` · ${bdStr}` : ''}</div>
+        </div>
+        <div class="ranking-likes"><i class="fa-solid fa-heart" style="color:#dc2626"></i> ${u.totalLikes}</div>
+      </div>`;
+  }).join('');
 }
 
 // =============================================
@@ -1136,33 +1375,107 @@ function switchView(viewName) {
   }
   if (viewName === 'profile') loadProfileView();
   if (viewName === 'explore') loadExploreView();
+  if (viewName === 'ranking') loadRankings();
   closeSidebar();
 }
 
 // =============================================
 // 프로필 뷰
 // =============================================
-function loadProfileView() {
+async function loadProfileView() {
   dom.profileName.textContent = USER.nickname;
   if (dom.profileBio) dom.profileBio.textContent = USER.bio || '소개글이 없습니다.';
   setAvatarEl(dom.profileAvatarLarge, USER.avatarUrl, USER.color, getInitials(USER.nickname));
 
-  fetch('/api/posts?limit=50')
-    .then(r => r.json())
-    .then(data => {
-      const myPosts = data.posts.filter(p => p.authorId === USER.id);
-      dom.myPostCount.textContent = myPosts.length;
-      dom.myLikeCount.textContent = myPosts.reduce((sum, p) => sum + (p.likeCount || 0), 0);
-      dom.myPostsFeed.innerHTML = '';
-      if (myPosts.length === 0) {
-        dom.myPostsFeed.innerHTML = `<div class="empty-feed">
-          <div class="empty-feed-icon"><i class="fa-solid fa-pen-nib"></i></div>
-          <p>아직 작성한 게시글이 없습니다</p>
+  // 내 랭킹 정보
+  const ranked = getRankedUser(USER.id);
+  if (ranked && dom.profileBadge && dom.profileTitle) {
+    dom.profileBadge.textContent = ranked.badge || '';
+    dom.profileBadge.classList.toggle('hidden', !ranked.badge);
+    dom.profileTitle.textContent = ranked.title || '';
+    dom.profileTitle.classList.toggle('hidden', !ranked.title);
+  } else {
+    dom.profileBadge && dom.profileBadge.classList.add('hidden');
+    dom.profileTitle && dom.profileTitle.classList.add('hidden');
+  }
+
+  // 게시글 + 좋아요 분류
+  try {
+    const [postsRes, likesRes] = await Promise.all([
+      fetch('/api/posts?limit=50'),
+      fetch(`/api/users/${USER.id}/likes`),
+    ]);
+    const postsData = await postsRes.json();
+    const likesData = await likesRes.json();
+
+    const myPosts = postsData.posts.filter(p => p.authorId === USER.id);
+    dom.myPostCount.textContent = myPosts.length;
+    dom.myLikeCount.textContent = likesData.total || 0;
+
+    if (dom.likeBreakdownDetail) {
+      const bd = likesData.breakdown || {};
+      dom.likeBreakdownDetail.innerHTML = LIKE_TYPES
+        .map(t => `<span style="margin-right:8px">${t} <strong>${bd[t] || 0}</strong></span>`)
+        .join('');
+    }
+
+    dom.myPostsFeed.innerHTML = '';
+    if (myPosts.length === 0) {
+      dom.myPostsFeed.innerHTML = `<div class="empty-feed">
+        <div class="empty-feed-icon"><i class="fa-solid fa-pen-nib"></i></div>
+        <p>아직 작성한 게시글이 없습니다</p>
+      </div>`;
+    } else {
+      myPosts.forEach(p => dom.myPostsFeed.appendChild(createPostElement(p)));
+    }
+  } catch (err) {
+    console.error('프로필 로딩 오류:', err);
+  }
+
+  // 명예의전당 1위 전용 기능
+  const hofData = state.rankingsData.hallOfFame;
+  const isHoF = hofData && hofData.userId === USER.id;
+  if (dom.hofPowers) {
+    dom.hofPowers.classList.toggle('hidden', !isHoF);
+    if (isHoF && dom.hofPowerButtons) {
+      dom.hofPowerButtons.innerHTML = `
+        <div class="hof-powers-title">🔥 명예의전당 1위 전용 권한</div>
+        <div class="hof-power-buttons">
+          <button class="btn btn-ghost btn-sm" onclick="openHofPinModal()">
+            <i class="fa-solid fa-thumbtack"></i> 게시글 고정
+          </button>
+          <button class="btn btn-ghost btn-sm" onclick="openHofRecommendModal()">
+            <i class="fa-solid fa-star"></i> 오늘의 추천글 선정
+          </button>
         </div>`;
-      } else {
-        myPosts.forEach(p => dom.myPostsFeed.appendChild(createPostElement(p)));
-      }
-    });
+    }
+  }
+}
+
+function openHofPinModal() {
+  const postId = prompt('고정할 게시글 ID를 입력하세요 (현재 페이지의 게시글 ID):');
+  if (!postId) return;
+  fetch(`/api/posts/${postId}/pin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId: USER.id }),
+  })
+    .then(r => r.json())
+    .then(d => showToast(d.success ? '고정 처리되었습니다!' : d.error, d.success ? 'success' : 'error'))
+    .catch(() => showToast('고정 처리 실패', 'error'));
+}
+
+function openHofRecommendModal() {
+  const postId = prompt('추천할 게시글 ID를 입력하세요:');
+  if (!postId) return;
+  fetch(`/api/posts/${postId}/recommend`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId: USER.id }),
+  })
+    .then(r => r.json())
+    .then(d => showToast(d.success ? '추천글 선정 완료!' : d.error, d.success ? 'success' : 'error'))
+    .catch(() => showToast('추천글 선정 실패', 'error'));
 }
 
 // =============================================
@@ -1233,7 +1546,6 @@ async function saveSettings() {
     return;
   }
 
-  // 프로필 사진 업로드
   const avatarFile = dom.avatarInput?.files?.[0];
   if (avatarFile) {
     const formData = new FormData();
@@ -1266,6 +1578,129 @@ async function saveSettings() {
   updateProfileUI();
   closeSettingsModal();
   showToast('프로필이 저장되었습니다!', 'success');
+}
+
+// =============================================
+// 관리자 패널
+// =============================================
+function openAdminModal() {
+  $('adminModal').classList.remove('hidden');
+  if (state.adminVerified) {
+    $('adminLoginSection').classList.add('hidden');
+    $('adminPanel').classList.remove('hidden');
+    loadAdminUsers();
+  } else {
+    $('adminLoginSection').classList.remove('hidden');
+    $('adminPanel').classList.add('hidden');
+  }
+}
+
+function closeAdminModal() {
+  $('adminModal').classList.add('hidden');
+}
+
+async function verifyAdmin() {
+  const pw = $('adminPasswordInput').value;
+  if (!pw) { showToast('비밀번호를 입력하세요.', 'warning'); return; }
+  try {
+    const res = await fetch('/api/admin/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw }),
+    });
+    if (res.ok) {
+      state.adminPw = pw;
+      state.adminVerified = true;
+      $('adminLoginSection').classList.add('hidden');
+      $('adminPanel').classList.remove('hidden');
+      loadAdminUsers();
+      showToast('관리자 인증 성공!', 'success');
+    } else {
+      showToast('비밀번호가 틀렸습니다.', 'error');
+    }
+  } catch {
+    showToast('인증 오류', 'error');
+  }
+}
+
+async function loadAdminUsers() {
+  try {
+    const res = await fetch(`/api/admin/users?password=${encodeURIComponent(state.adminPw)}`);
+    if (!res.ok) return;
+    const users = await res.json();
+    const listEl = $('adminUserList');
+    const selectEl = $('warnTargetSelect');
+
+    listEl.innerHTML = users.length === 0
+      ? '<div style="color:var(--text-3);font-size:12px;padding:4px">온라인 사용자 없음</div>'
+      : users.map(u => `
+          <div class="admin-user-item">
+            <span class="admin-user-name">${escHtml(u.nickname)}</span>
+            <span class="admin-user-sid">${u.socketId.slice(0, 8)}</span>
+            <button class="btn btn-danger btn-sm" style="padding:2px 8px;font-size:11px"
+                    onclick="quickWarn('${u.socketId}','${escHtml(u.nickname)}')">경고</button>
+          </div>`).join('');
+
+    selectEl.innerHTML = users.map(u =>
+      `<option value="${u.socketId}">${escHtml(u.nickname)}</option>`
+    ).join('');
+  } catch (err) {
+    console.error('관리자 유저 로딩 오류:', err);
+  }
+}
+
+async function sendAnnounce() {
+  const message = $('announceText').value.trim();
+  if (!message) { showToast('공지 내용을 입력하세요.', 'warning'); return; }
+  try {
+    const res = await fetch('/api/admin/announce', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: state.adminPw, message }),
+    });
+    if (res.ok) {
+      $('announceText').value = '';
+      showToast('공지가 발송되었습니다!', 'success');
+    } else {
+      const d = await res.json();
+      showToast(d.error || '공지 발송 실패', 'error');
+    }
+  } catch {
+    showToast('공지 발송 오류', 'error');
+  }
+}
+
+async function sendWarning() {
+  const targetSocketId = $('warnTargetSelect').value;
+  const message = $('warnMessage').value.trim();
+  if (!targetSocketId) { showToast('대상 유저를 선택하세요.', 'warning'); return; }
+  if (!message) { showToast('경고 메시지를 입력하세요.', 'warning'); return; }
+  await doWarn(targetSocketId, message);
+}
+
+async function quickWarn(socketId, nickname) {
+  const message = prompt(`${nickname}에게 보낼 경고 메시지:`);
+  if (!message) return;
+  await doWarn(socketId, message);
+}
+
+async function doWarn(targetSocketId, message) {
+  try {
+    const res = await fetch('/api/admin/warn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: state.adminPw, targetSocketId, message }),
+    });
+    if (res.ok) {
+      $('warnMessage') && ($('warnMessage').value = '');
+      showToast('경고 메시지가 전송되었습니다.', 'success');
+    } else {
+      const d = await res.json();
+      showToast(d.error || '경고 전송 실패', 'error');
+    }
+  } catch {
+    showToast('경고 전송 오류', 'error');
+  }
 }
 
 // =============================================
@@ -1381,6 +1816,8 @@ function setupKeyboardShortcuts() {
       closeImageModal();
       closeCreateRoomModal();
       closeSettingsModal();
+      closeAdminModal();
+      $('warningModal')?.classList.add('hidden');
       $('emojiPicker')?.classList.add('hidden');
       $('emojiPickerChat')?.classList.add('hidden');
     }

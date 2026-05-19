@@ -1,6 +1,6 @@
 /**
- * server.js - 과천중 비밀게시판 메인 서버
- * Express + Socket.io 기반의 실시간 커뮤니티 서버
+ * server.js - 과천중 비밀게시판
+ * 랭킹·명예의전당·관리자·다중좋아요 완전판
  */
 
 const express = require('express');
@@ -29,38 +29,236 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 function loadJSON(filename, fallback) {
   const filepath = path.join(DATA_DIR, filename);
   try {
-    if (fs.existsSync(filepath)) {
-      return JSON.parse(fs.readFileSync(filepath, 'utf-8'));
-    }
-  } catch (e) {
-    console.error(`[데이터 로드 오류] ${filename}:`, e.message);
-  }
+    if (fs.existsSync(filepath)) return JSON.parse(fs.readFileSync(filepath, 'utf-8'));
+  } catch (e) { console.error(`[로드 오류] ${filename}:`, e.message); }
   return fallback;
 }
 
 function saveJSON(filename, data) {
-  const filepath = path.join(DATA_DIR, filename);
   try {
-    fs.writeFileSync(filepath, JSON.stringify(data), 'utf-8');
-  } catch (e) {
-    console.error(`[데이터 저장 오류] ${filename}:`, e.message);
-  }
+    fs.writeFileSync(path.join(DATA_DIR, filename), JSON.stringify(data), 'utf-8');
+  } catch (e) { console.error(`[저장 오류] ${filename}:`, e.message); }
 }
 
-// 서버 시작 시 데이터 로드
-let posts = loadJSON('posts.json', []);
+// =============================================
+// 데이터 로드
+// =============================================
+let posts    = loadJSON('posts.json',    []);
 let comments = loadJSON('comments.json', {});
-let likes = loadJSON('likes.json', {});
+let likes    = loadJSON('likes.json',    {});  // { postId: { "👍":[], "😂":[], "🧠":[], "💀":[] } }
 
-// 인메모리 데이터
-let onlineUsers = {};
+// 랭킹·명예의전당
+let rankingsData = loadJSON('rankings.json', {
+  lastWeek:         '',
+  top10:            [],
+  hallOfFame:       null,
+  rankHistory:      {},   // { userId: { consecutiveWins, lastWinWeek, totalWins } }
+  pinnedPostId:     null,
+  recommendedPostId: null,
+});
+
+// 인메모리
+let onlineUsers    = {};
 let globalMessages = [];
 let directMessages = {};
-let groupRooms = {};
+let groupRooms     = {};
 
-function savePosts() { saveJSON('posts.json', posts); }
-function saveComments() { saveJSON('comments.json', comments); }
-function saveLikes() { saveJSON('likes.json', likes); }
+// =============================================
+// 좋아요 형식 마이그레이션 (배열 → 객체)
+// =============================================
+const LIKE_TYPES = ['👍', '😂', '🧠', '💀'];
+
+function migrateLikes() {
+  let changed = false;
+  for (const postId in likes) {
+    if (Array.isArray(likes[postId])) {
+      likes[postId] = { '👍': likes[postId], '😂': [], '🧠': [], '💀': [] };
+      changed = true;
+    }
+    for (const t of LIKE_TYPES) {
+      if (!Array.isArray(likes[postId][t])) likes[postId][t] = [];
+    }
+  }
+  // 게시글마다 likes 초기화 보장
+  for (const post of posts) {
+    if (!likes[post.id]) {
+      likes[post.id] = { '👍': [], '😂': [], '🧠': [], '💀': [] };
+      changed = true;
+    }
+  }
+  if (changed) saveJSON('likes.json', likes);
+}
+migrateLikes();
+
+// =============================================
+// 저장 헬퍼
+// =============================================
+const savePosts    = () => saveJSON('posts.json',    posts);
+const saveComments = () => saveJSON('comments.json', comments);
+const saveLikes    = () => saveJSON('likes.json',    likes);
+const saveRankings = () => saveJSON('rankings.json', rankingsData);
+
+// =============================================
+// 좋아요 유틸
+// =============================================
+function getTotalLikes(postId) {
+  const pl = likes[postId] || {};
+  return LIKE_TYPES.reduce((s, t) => s + (pl[t]?.length || 0), 0);
+}
+
+function getLikeBreakdown(postId) {
+  const pl = likes[postId] || {};
+  const bd = {};
+  for (const t of LIKE_TYPES) bd[t] = pl[t]?.length || 0;
+  return bd;
+}
+
+// =============================================
+// 랭킹 계산
+// =============================================
+function getCurrentWeek() {
+  const now = new Date();
+  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+function getDominantLike(breakdown) {
+  return LIKE_TYPES.reduce((a, b) => (breakdown[a] || 0) >= (breakdown[b] || 0) ? a : b);
+}
+
+function getTitle(rank, dominant, consecutiveWins) {
+  if (rank === 1) {
+    if (consecutiveWins >= 3) return '🏆 전설의 인기인';
+    if (consecutiveWins >= 2) return '💎 다이아 인기인';
+    const map = { '👍': '💪 추천왕', '😂': '😂 개그왕', '🧠': '🧠 지식인', '💀': '👑 레전드' };
+    return map[dominant] || '🔥 이번달 인기인';
+  }
+  if (rank <= 3) {
+    const map = { '👍': '👍 추천러', '😂': '🤣 웃김왕', '🧠': '📚 정보통', '💀': '🔥 레전드후보' };
+    return map[dominant] || '🥈 TOP3';
+  }
+  return '✨ TOP10 인기인';
+}
+
+function getBadge(rank, dominant, consecutiveWins) {
+  if (rank === 1) {
+    if (consecutiveWins >= 3) return '👑';
+    if (consecutiveWins >= 2) return '💎';
+    const map = { '👍': '💪', '😂': '😂', '🧠': '🧠', '💀': '💀' };
+    return '🥇' + (map[dominant] || '');
+  }
+  if (rank === 2) return '🥈';
+  if (rank === 3) return '🥉';
+  return '⭐';
+}
+
+function calculateWeeklyRankings() {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const recentPosts = posts.filter(p => new Date(p.createdAt) >= sevenDaysAgo && p.authorId !== 'admin');
+  const userStats = {};
+
+  for (const post of recentPosts) {
+    const aid = post.authorId;
+    if (!userStats[aid]) {
+      userStats[aid] = {
+        userId: aid,
+        nickname: post.author,
+        color: post.authorColor || '#2563eb',
+        avatarUrl: post.authorAvatar || null,
+        bio: '',
+        likeBreakdown: { '👍': 0, '😂': 0, '🧠': 0, '💀': 0 },
+        totalLikes: 0,
+        postCount: 0
+      };
+    }
+    userStats[aid].postCount++;
+    userStats[aid].nickname = post.author;
+    userStats[aid].color = post.authorColor || '#2563eb';
+    userStats[aid].avatarUrl = post.authorAvatar || null;
+    for (const t of LIKE_TYPES) {
+      const cnt = likes[post.id]?.[t]?.length || 0;
+      userStats[aid].likeBreakdown[t] += cnt;
+      userStats[aid].totalLikes += cnt;
+    }
+  }
+
+  // 온라인 유저 bio/avatar 최신화
+  for (const sid in onlineUsers) {
+    const u = onlineUsers[sid];
+    if (userStats[u.userId]) {
+      userStats[u.userId].bio = u.bio || '';
+      if (u.avatarUrl) userStats[u.userId].avatarUrl = u.avatarUrl;
+    }
+  }
+
+  return Object.values(userStats)
+    .sort((a, b) => b.totalLikes - a.totalLikes)
+    .slice(0, 10)
+    .map((u, i) => ({ ...u, rank: i + 1, dominant: getDominantLike(u.likeBreakdown) }));
+}
+
+function refreshRankings() {
+  const week = getCurrentWeek();
+  if (rankingsData.lastWeek === week) return; // 이번주 이미 계산됨
+
+  const top10 = calculateWeeklyRankings();
+
+  if (top10.length > 0) {
+    const winner = top10[0];
+    const prevHistory = rankingsData.rankHistory[winner.userId] || {};
+    const prevWinWeek = prevHistory.lastWinWeek || '';
+
+    // 연속 우승 확인 (이전 주 우승자인지)
+    let consecutive = 1;
+    const prevWeekNum = rankingsData.lastWeek;
+    if (prevWinWeek === prevWeekNum) {
+      consecutive = (prevHistory.consecutiveWins || 0) + 1;
+    }
+
+    rankingsData.rankHistory[winner.userId] = {
+      consecutiveWins: consecutive,
+      lastWinWeek: week,
+      totalWins: (prevHistory.totalWins || 0) + 1
+    };
+
+    const prevHoF = rankingsData.hallOfFame;
+    rankingsData.hallOfFame = {
+      ...winner,
+      consecutiveWins: consecutive,
+      sinceDate: (prevHoF?.userId === winner.userId) ? prevHoF.sinceDate : new Date().toISOString()
+    };
+  }
+
+  rankingsData.lastWeek = week;
+  rankingsData.top10 = top10;
+  saveRankings();
+}
+
+function enrichTop10(top10) {
+  return top10.map(u => {
+    const hist = rankingsData.rankHistory[u.userId] || {};
+    const cons = hist.consecutiveWins || 0;
+    return {
+      ...u,
+      consecutiveWins: cons,
+      title: getTitle(u.rank, u.dominant, cons),
+      badge: getBadge(u.rank, u.dominant, cons)
+    };
+  });
+}
+
+// =============================================
+// 관리자 설정
+// =============================================
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '관리자1234';
+
+function isAdmin(pw) { return pw === ADMIN_PASSWORD; }
+function isHoFWinner(userId) {
+  return rankingsData.hallOfFame && rankingsData.hallOfFame.userId === userId;
+}
 
 // =============================================
 // 미들웨어
@@ -74,38 +272,41 @@ if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
 if (!fs.existsSync('uploads/avatars')) fs.mkdirSync('uploads/avatars');
 
 // =============================================
-// Multer 설정
+// Multer
 // =============================================
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename: (req, file, cb) => {
-    const safeName = file.originalname.replace(/[^a-zA-Z0-9.\-_가-힣]/g, '_');
-    cb(null, `${Date.now()}-${uuidv4().slice(0, 8)}-${safeName}`);
+  destination: (_, __, cb) => cb(null, 'uploads/'),
+  filename: (_, file, cb) => {
+    const safe = file.originalname.replace(/[^a-zA-Z0-9.\-_가-힣]/g, '_');
+    cb(null, `${Date.now()}-${uuidv4().slice(0, 8)}-${safe}`);
   }
 });
-
 const avatarStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/avatars/'),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `avatar-${Date.now()}-${uuidv4().slice(0, 8)}${ext}`);
+  destination: (_, __, cb) => cb(null, 'uploads/avatars/'),
+  filename: (_, file, cb) => {
+    cb(null, `avatar-${Date.now()}-${uuidv4().slice(0, 8)}${path.extname(file.originalname).toLowerCase()}`);
   }
 });
 
-const fileFilter = (req, file, cb) => {
-  const allowed = /jpeg|jpg|png|gif|webp|mp4|pdf|txt|zip|doc|docx|mp3/;
-  if (allowed.test(path.extname(file.originalname).toLowerCase())) cb(null, true);
-  else cb(new Error('허용되지 않는 파일 형식입니다.'));
-};
+const fileFilter  = (_, f, cb) => /jpeg|jpg|png|gif|webp|mp4|pdf|txt|zip|doc|docx|mp3/.test(path.extname(f.originalname).toLowerCase()) ? cb(null, true) : cb(new Error('허용되지 않는 파일'));
+const imageFilter = (_, f, cb) => /jpeg|jpg|png|gif|webp/.test(path.extname(f.originalname).toLowerCase()) ? cb(null, true) : cb(new Error('이미지만 가능'));
 
-const imageFilter = (req, file, cb) => {
-  const allowed = /jpeg|jpg|png|gif|webp/;
-  if (allowed.test(path.extname(file.originalname).toLowerCase())) cb(null, true);
-  else cb(new Error('이미지 파일만 업로드 가능합니다.'));
-};
-
-const upload = multer({ storage, fileFilter, limits: { fileSize: 10 * 1024 * 1024 } });
+const upload       = multer({ storage,       fileFilter,  limits: { fileSize: 10 * 1024 * 1024 } });
 const uploadAvatar = multer({ storage: avatarStorage, fileFilter: imageFilter, limits: { fileSize: 3 * 1024 * 1024 } });
+
+// =============================================
+// 공통 게시글 응답 빌더
+// =============================================
+function postResponse(p) {
+  return {
+    ...p,
+    likeCount: getTotalLikes(p.id),
+    likeBreakdown: getLikeBreakdown(p.id),
+    commentCount: (comments[p.id] || []).length,
+    isPinned: rankingsData.pinnedPostId === p.id,
+    isRecommended: rankingsData.recommendedPostId === p.id,
+  };
+}
 
 // =============================================
 // API - 게시글
@@ -114,41 +315,27 @@ app.get('/api/posts', (req, res) => {
   try {
     const { search = '', page = 1, limit = 10 } = req.query;
     let filtered = [...posts].reverse();
-
     if (search.trim()) {
       const q = search.toLowerCase();
-      filtered = filtered.filter(p =>
-        p.content.toLowerCase().includes(q) ||
-        p.author.toLowerCase().includes(q)
-      );
+      filtered = filtered.filter(p => p.content.toLowerCase().includes(q) || p.author.toLowerCase().includes(q));
     }
-
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const start = (pageNum - 1) * limitNum;
-    const paginated = filtered.slice(start, start + limitNum);
-
+    const start = (parseInt(page) - 1) * parseInt(limit);
+    const paginated = filtered.slice(start, start + parseInt(limit));
     res.json({
-      posts: paginated.map(p => ({
-        ...p,
-        likeCount: (likes[p.id] || []).length,
-        commentCount: (comments[p.id] || []).length
-      })),
-      hasMore: filtered.length > start + limitNum,
-      total: filtered.length
+      posts: paginated.map(postResponse),
+      hasMore: filtered.length > start + parseInt(limit),
+      total: filtered.length,
+      pinnedPostId: rankingsData.pinnedPostId,
+      recommendedPostId: rankingsData.recommendedPostId,
     });
-  } catch (err) {
-    res.status(500).json({ error: '서버 오류가 발생했습니다.' });
-  }
+  } catch (err) { res.status(500).json({ error: '서버 오류' }); }
 });
 
 app.post('/api/posts', upload.array('files', 5), (req, res) => {
   try {
     const { content, author, authorId, authorColor, authorAvatar } = req.body;
-
-    if (!content?.trim() && (!req.files || req.files.length === 0)) {
+    if (!content?.trim() && (!req.files || req.files.length === 0))
       return res.status(400).json({ error: '내용 또는 파일이 필요합니다.' });
-    }
 
     const post = {
       id: uuidv4(),
@@ -158,82 +345,59 @@ app.post('/api/posts', upload.array('files', 5), (req, res) => {
       authorColor: authorColor || '#2563eb',
       authorAvatar: authorAvatar || null,
       files: (req.files || []).map(f => ({
-        filename: f.filename,
-        originalname: f.originalname,
-        mimetype: f.mimetype,
-        size: f.size,
-        url: `/uploads/${f.filename}`
+        filename: f.filename, originalname: f.originalname,
+        mimetype: f.mimetype, size: f.size, url: `/uploads/${f.filename}`
       })),
       createdAt: new Date().toISOString()
     };
 
     posts.push(post);
-    likes[post.id] = [];
+    likes[post.id] = { '👍': [], '😂': [], '🧠': [], '💀': [] };
     comments[post.id] = [];
+    savePosts(); saveLikes(); saveComments();
 
-    savePosts();
-    saveLikes();
-    saveComments();
-
-    const postData = { ...post, likeCount: 0, commentCount: 0 };
-    io.emit('newPost', postData);
-    res.json(postData);
-  } catch (err) {
-    res.status(500).json({ error: '게시글 작성 실패: ' + err.message });
-  }
+    const resp = postResponse(post);
+    io.emit('newPost', resp);
+    res.json(resp);
+  } catch (err) { res.status(500).json({ error: '게시글 작성 실패: ' + err.message }); }
 });
 
 app.delete('/api/posts/:id', (req, res) => {
   try {
     const { id } = req.params;
     const { authorId } = req.body;
-
     const idx = posts.findIndex(p => p.id === id);
-    if (idx === -1) return res.status(404).json({ error: '게시글을 찾을 수 없습니다.' });
+    if (idx === -1) return res.status(404).json({ error: '게시글 없음' });
+    if (posts[idx].authorId !== authorId) return res.status(403).json({ error: '권한 없음' });
 
-    const post = posts[idx];
-    if (post.authorId !== authorId) return res.status(403).json({ error: '권한이 없습니다.' });
-
-    post.files.forEach(f => {
+    posts[idx].files.forEach(f => {
       const fp = path.join('uploads', f.filename);
       if (fs.existsSync(fp)) fs.unlinkSync(fp);
     });
-
     posts.splice(idx, 1);
-    delete likes[id];
-    delete comments[id];
-
-    savePosts();
-    saveLikes();
-    saveComments();
-
+    delete likes[id]; delete comments[id];
+    if (rankingsData.pinnedPostId === id) { rankingsData.pinnedPostId = null; saveRankings(); }
+    if (rankingsData.recommendedPostId === id) { rankingsData.recommendedPostId = null; saveRankings(); }
+    savePosts(); saveLikes(); saveComments();
     io.emit('deletePost', id);
     res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: '삭제 실패' });
-  }
+  } catch { res.status(500).json({ error: '삭제 실패' }); }
 });
 
 // =============================================
 // API - 댓글
 // =============================================
-app.get('/api/posts/:id/comments', (req, res) => {
-  res.json(comments[req.params.id] || []);
-});
+app.get('/api/posts/:id/comments', (req, res) => res.json(comments[req.params.id] || []));
 
 app.post('/api/posts/:id/comments', (req, res) => {
   try {
     const { id } = req.params;
     const { content, author, authorId, authorColor, authorAvatar } = req.body;
-
-    if (!content?.trim()) return res.status(400).json({ error: '댓글 내용이 필요합니다.' });
+    if (!content?.trim()) return res.status(400).json({ error: '내용 필요' });
     if (!posts.find(p => p.id === id)) return res.status(404).json({ error: '게시글 없음' });
-
     if (!comments[id]) comments[id] = [];
-
     const comment = {
-      id: uuidv4(),
-      postId: id,
+      id: uuidv4(), postId: id,
       content: content.slice(0, 500),
       author: (author || '익명').slice(0, 30),
       authorId: authorId || 'unknown',
@@ -241,66 +405,204 @@ app.post('/api/posts/:id/comments', (req, res) => {
       authorAvatar: authorAvatar || null,
       createdAt: new Date().toISOString()
     };
-
     comments[id].push(comment);
     saveComments();
-
     io.emit('newComment', comment);
     res.json(comment);
-  } catch (err) {
-    res.status(500).json({ error: '댓글 작성 실패' });
-  }
+  } catch { res.status(500).json({ error: '댓글 작성 실패' }); }
 });
 
 // =============================================
-// API - 좋아요
+// API - 좋아요 (다중 타입)
 // =============================================
 app.post('/api/posts/:id/like', (req, res) => {
   try {
     const { id } = req.params;
-    const { userId } = req.body;
+    const { userId, type = '👍' } = req.body;
+    if (!LIKE_TYPES.includes(type)) return res.status(400).json({ error: '잘못된 좋아요 타입' });
+    if (!posts.find(p => p.id === id)) return res.status(404).json({ error: '게시글 없음' });
 
-    if (!likes[id]) likes[id] = [];
+    if (!likes[id]) likes[id] = { '👍': [], '😂': [], '🧠': [], '💀': [] };
 
-    const idx = likes[id].indexOf(userId);
-    const liked = idx === -1;
-    if (liked) likes[id].push(userId);
-    else likes[id].splice(idx, 1);
+    // 기존 좋아요 타입 제거
+    let prevType = null;
+    for (const t of LIKE_TYPES) {
+      const idx = likes[id][t].indexOf(userId);
+      if (idx !== -1) { likes[id][t].splice(idx, 1); prevType = t; }
+    }
+
+    // 같은 타입 = 좋아요 취소, 다른 타입 = 변경
+    let liked = false;
+    if (prevType !== type) { likes[id][type].push(userId); liked = true; }
 
     saveLikes();
-
-    const update = { postId: id, likeCount: likes[id].length, userId, liked };
+    const breakdown = getLikeBreakdown(id);
+    const update = { postId: id, breakdown, totalLikes: getTotalLikes(id), userId, liked, type };
     io.emit('likeUpdate', update);
     res.json(update);
-  } catch (err) {
-    res.status(500).json({ error: '좋아요 처리 실패' });
-  }
+  } catch { res.status(500).json({ error: '좋아요 실패' }); }
 });
 
 // =============================================
 // API - 파일 업로드
 // =============================================
 app.post('/api/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: '파일이 없습니다.' });
-  res.json({
-    filename: req.file.filename,
-    originalname: req.file.originalname,
-    mimetype: req.file.mimetype,
-    size: req.file.size,
-    url: `/uploads/${req.file.filename}`
-  });
+  if (!req.file) return res.status(400).json({ error: '파일 없음' });
+  res.json({ filename: req.file.filename, originalname: req.file.originalname,
+             mimetype: req.file.mimetype, size: req.file.size, url: `/uploads/${req.file.filename}` });
 });
 
-// 프로필 사진 업로드
 app.post('/api/upload/avatar', uploadAvatar.single('avatar'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: '이미지 파일이 없습니다.' });
-  res.json({
-    url: `/uploads/avatars/${req.file.filename}`
-  });
+  if (!req.file) return res.status(400).json({ error: '이미지 없음' });
+  res.json({ url: `/uploads/avatars/${req.file.filename}` });
 });
 
 // =============================================
-// Socket.io 이벤트
+// API - 랭킹
+// =============================================
+app.get('/api/rankings', (req, res) => {
+  refreshRankings(); // 새 주면 재계산
+  const top10 = enrichTop10(rankingsData.top10);
+  const hof = rankingsData.hallOfFame ? {
+    ...rankingsData.hallOfFame,
+    consecutiveWins: rankingsData.rankHistory[rankingsData.hallOfFame.userId]?.consecutiveWins || 1,
+    title: getTitle(1, rankingsData.hallOfFame.dominant,
+      rankingsData.rankHistory[rankingsData.hallOfFame.userId]?.consecutiveWins || 1),
+    badge: getBadge(1, rankingsData.hallOfFame.dominant,
+      rankingsData.rankHistory[rankingsData.hallOfFame.userId]?.consecutiveWins || 1),
+  } : null;
+  res.json({ week: rankingsData.lastWeek, top10, hallOfFame: hof,
+             pinnedPostId: rankingsData.pinnedPostId,
+             recommendedPostId: rankingsData.recommendedPostId });
+});
+
+// 유저별 총 좋아요 합계 (프로필용)
+app.get('/api/users/:userId/likes', (req, res) => {
+  const { userId } = req.params;
+  const myPosts = posts.filter(p => p.authorId === userId);
+  const breakdown = { '👍': 0, '😂': 0, '🧠': 0, '💀': 0 };
+  let total = 0;
+  for (const p of myPosts) {
+    for (const t of LIKE_TYPES) {
+      const cnt = likes[p.id]?.[t]?.length || 0;
+      breakdown[t] += cnt;
+      total += cnt;
+    }
+  }
+  res.json({ total, breakdown });
+});
+
+// =============================================
+// API - 게시글 고정 (관리자 또는 명예의전당 1위)
+// =============================================
+app.post('/api/posts/:id/pin', (req, res) => {
+  const { id } = req.params;
+  const { userId, adminPassword } = req.body;
+  if (!isAdmin(adminPassword) && !isHoFWinner(userId))
+    return res.status(403).json({ error: '권한 없음' });
+  if (!posts.find(p => p.id === id)) return res.status(404).json({ error: '게시글 없음' });
+
+  rankingsData.pinnedPostId = rankingsData.pinnedPostId === id ? null : id;
+  saveRankings();
+  io.emit('pinnedPost', { postId: rankingsData.pinnedPostId });
+  res.json({ success: true, postId: rankingsData.pinnedPostId });
+});
+
+// 오늘의 추천글 선정 (관리자 또는 명예의전당 1위)
+app.post('/api/posts/:id/recommend', (req, res) => {
+  const { id } = req.params;
+  const { userId, adminPassword } = req.body;
+  if (!isAdmin(adminPassword) && !isHoFWinner(userId))
+    return res.status(403).json({ error: '권한 없음' });
+  if (!posts.find(p => p.id === id)) return res.status(404).json({ error: '게시글 없음' });
+
+  rankingsData.recommendedPostId = rankingsData.recommendedPostId === id ? null : id;
+  saveRankings();
+  io.emit('recommendedPost', { postId: rankingsData.recommendedPostId });
+  res.json({ success: true, postId: rankingsData.recommendedPostId });
+});
+
+// =============================================
+// API - 관리자
+// =============================================
+app.post('/api/admin/verify', (req, res) => {
+  const { password } = req.body;
+  if (isAdmin(password)) res.json({ success: true });
+  else res.status(401).json({ error: '비밀번호가 틀렸습니다.' });
+});
+
+// 전체 공지 (익명 시스템 게시글로 올라감)
+app.post('/api/admin/announce', (req, res) => {
+  const { password, message } = req.body;
+  if (!isAdmin(password)) return res.status(401).json({ error: '권한 없음' });
+  if (!message?.trim()) return res.status(400).json({ error: '내용 없음' });
+
+  const sysPost = {
+    id: uuidv4(),
+    content: message.trim().slice(0, 500),
+    author: '운영진',
+    authorId: 'admin',
+    authorColor: '#dc2626',
+    authorAvatar: null,
+    isAnnouncement: true,
+    files: [],
+    createdAt: new Date().toISOString()
+  };
+
+  posts.push(sysPost);
+  likes[sysPost.id] = { '👍': [], '😂': [], '🧠': [], '💀': [] };
+  comments[sysPost.id] = [];
+  savePosts(); saveLikes(); saveComments();
+
+  io.emit('newPost', postResponse(sysPost));
+  io.emit('announcement', { message: message.trim(), createdAt: sysPost.createdAt });
+  res.json({ success: true });
+});
+
+// 게시글 강제 삭제
+app.delete('/api/admin/posts/:id', (req, res) => {
+  const { password } = req.body;
+  if (!isAdmin(password)) return res.status(401).json({ error: '권한 없음' });
+  const { id } = req.params;
+  const idx = posts.findIndex(p => p.id === id);
+  if (idx === -1) return res.status(404).json({ error: '게시글 없음' });
+
+  posts[idx].files.forEach(f => {
+    const fp = path.join('uploads', f.filename);
+    if (fs.existsSync(fp)) fs.unlinkSync(fp);
+  });
+  posts.splice(idx, 1);
+  delete likes[id]; delete comments[id];
+  if (rankingsData.pinnedPostId === id) { rankingsData.pinnedPostId = null; saveRankings(); }
+  if (rankingsData.recommendedPostId === id) { rankingsData.recommendedPostId = null; saveRankings(); }
+  savePosts(); saveLikes(); saveComments();
+  io.emit('deletePost', id);
+  res.json({ success: true });
+});
+
+// 경고 메시지 (소켓으로 특정 유저에게 전송)
+app.post('/api/admin/warn', (req, res) => {
+  const { password, targetSocketId, message } = req.body;
+  if (!isAdmin(password)) return res.status(401).json({ error: '권한 없음' });
+
+  const target = io.sockets.sockets.get(targetSocketId);
+  if (!target) return res.status(404).json({ error: '사용자 없음 (오프라인)' });
+
+  target.emit('adminWarning', { message: (message || '커뮤니티 이용 규칙을 위반하셨습니다. 주의해 주세요.').slice(0, 200), createdAt: new Date().toISOString() });
+  res.json({ success: true });
+});
+
+// 온라인 유저 목록 (관리자용)
+app.get('/api/admin/users', (req, res) => {
+  const { password } = req.query;
+  if (!isAdmin(password)) return res.status(401).json({ error: '권한 없음' });
+  res.json(Object.values(onlineUsers).map(u => ({
+    socketId: u.socketId, nickname: u.nickname, userId: u.userId, joinedAt: u.joinedAt
+  })));
+});
+
+// =============================================
+// Socket.io
 // =============================================
 io.on('connection', (socket) => {
   console.log(`[연결] ${socket.id}`);
@@ -314,13 +616,8 @@ io.on('connection', (socket) => {
   // 사용자 입장
   socket.on('userJoin', (userData) => {
     const nickname = userData.nickname || '익명';
-
-    // 닉네임 중복 차단
     const taken = Object.values(onlineUsers).some(u => u.nickname === nickname);
-    if (taken) {
-      socket.emit('nicknameTaken', { nickname });
-      return;
-    }
+    if (taken) { socket.emit('nicknameTaken', { nickname }); return; }
 
     onlineUsers[socket.id] = {
       socketId: socket.id,
@@ -334,28 +631,20 @@ io.on('connection', (socket) => {
 
     socket.join('global');
     io.emit('onlineUsers', Object.values(onlineUsers));
-    io.emit('systemMessage', {
-      type: 'join',
-      nickname,
-      message: `${nickname}님이 입장하셨습니다.`,
-      createdAt: new Date().toISOString()
-    });
-
+    io.emit('systemMessage', { type: 'join', nickname, message: `${nickname}님이 입장하셨습니다.`, createdAt: new Date().toISOString() });
     socket.emit('groupRooms', Object.values(groupRooms));
     socket.emit('globalHistory', globalMessages.slice(-50));
+    // 랭킹 정보도 함께 전송
+    refreshRankings();
+    socket.emit('rankingsUpdate', enrichTop10(rankingsData.top10));
   });
 
-  // 닉네임/프로필 업데이트
   socket.on('updateNickname', ({ newNickname }) => {
     if (onlineUsers[socket.id]) {
       const old = onlineUsers[socket.id].nickname;
       onlineUsers[socket.id].nickname = newNickname;
       io.emit('onlineUsers', Object.values(onlineUsers));
-      io.emit('systemMessage', {
-        type: 'rename',
-        message: `${old}님이 ${newNickname}으로 닉네임을 변경하셨습니다.`,
-        createdAt: new Date().toISOString()
-      });
+      io.emit('systemMessage', { type: 'rename', message: `${old}님이 ${newNickname}으로 닉네임을 변경하셨습니다.`, createdAt: new Date().toISOString() });
     }
   });
 
@@ -371,74 +660,49 @@ io.on('connection', (socket) => {
   socket.on('globalMessage', (data) => {
     const user = onlineUsers[socket.id];
     if (!user) return;
-
     const msg = {
-      id: uuidv4(),
-      content: (data.content || '').slice(0, 1000),
-      author: user.nickname,
-      authorId: user.userId,
-      authorColor: user.color,
-      authorAvatar: user.avatarUrl || null,
-      socketId: socket.id,
-      file: data.file || null,
-      createdAt: new Date().toISOString()
+      id: uuidv4(), content: (data.content || '').slice(0, 1000),
+      author: user.nickname, authorId: user.userId, authorColor: user.color,
+      authorAvatar: user.avatarUrl || null, socketId: socket.id,
+      file: data.file || null, createdAt: new Date().toISOString()
     };
-
     globalMessages.push(msg);
     if (globalMessages.length > 200) globalMessages.shift();
     io.emit('globalMessage', msg);
   });
 
-  // 1:1 다이렉트 메시지
+  // DM
   socket.on('directMessage', (data) => {
     const { toSocketId, content, file } = data;
     const user = onlineUsers[socket.id];
     if (!user) return;
-
     const msg = {
-      id: uuidv4(),
-      fromSocketId: socket.id,
-      toSocketId,
-      fromNickname: user.nickname,
-      fromColor: user.color,
+      id: uuidv4(), fromSocketId: socket.id, toSocketId,
+      fromNickname: user.nickname, fromColor: user.color,
       fromAvatar: user.avatarUrl || null,
-      content: (content || '').slice(0, 1000),
-      file: file || null,
+      content: (content || '').slice(0, 1000), file: file || null,
       createdAt: new Date().toISOString()
     };
-
-    const roomKey = [socket.id, toSocketId].sort().join('__');
-    if (!directMessages[roomKey]) directMessages[roomKey] = [];
-    directMessages[roomKey].push(msg);
-    if (directMessages[roomKey].length > 200) directMessages[roomKey].shift();
-
+    const key = [socket.id, toSocketId].sort().join('__');
+    if (!directMessages[key]) directMessages[key] = [];
+    directMessages[key].push(msg);
+    if (directMessages[key].length > 200) directMessages[key].shift();
     socket.emit('directMessage', msg);
     if (io.sockets.sockets.get(toSocketId)) io.to(toSocketId).emit('directMessage', msg);
   });
 
   socket.on('getDMHistory', ({ otherSocketId }) => {
-    const roomKey = [socket.id, otherSocketId].sort().join('__');
-    socket.emit('dmHistory', {
-      otherSocketId,
-      messages: directMessages[roomKey] || []
-    });
+    const key = [socket.id, otherSocketId].sort().join('__');
+    socket.emit('dmHistory', { otherSocketId, messages: directMessages[key] || [] });
   });
 
-  // 그룹 채팅방
+  // 그룹 채팅
   socket.on('createGroupRoom', ({ name }) => {
     const user = onlineUsers[socket.id];
     if (!user) return;
-
-    const room = {
-      id: uuidv4(),
-      name: name.slice(0, 30),
-      creatorSocketId: socket.id,
-      creatorNickname: user.nickname,
-      members: [socket.id],
-      messages: [],
-      createdAt: new Date().toISOString()
-    };
-
+    const room = { id: uuidv4(), name: name.slice(0, 30), creatorSocketId: socket.id,
+                   creatorNickname: user.nickname, members: [socket.id], messages: [],
+                   createdAt: new Date().toISOString() };
     groupRooms[room.id] = room;
     socket.join(room.id);
     io.emit('groupRoomCreated', room);
@@ -447,10 +711,8 @@ io.on('connection', (socket) => {
   socket.on('joinGroupRoom', ({ roomId }) => {
     const room = groupRooms[roomId];
     if (!room) return;
-
     socket.join(roomId);
     if (!room.members.includes(socket.id)) room.members.push(socket.id);
-
     socket.emit('groupRoomHistory', { roomId, messages: room.messages.slice(-50) });
     io.to(roomId).emit('groupRoomMemberUpdate', { roomId, memberCount: room.members.length });
   });
@@ -460,65 +722,43 @@ io.on('connection', (socket) => {
     const user = onlineUsers[socket.id];
     const room = groupRooms[roomId];
     if (!user || !room) return;
-
-    const msg = {
-      id: uuidv4(),
-      roomId,
-      content: (content || '').slice(0, 1000),
-      author: user.nickname,
-      authorId: user.userId,
-      authorColor: user.color,
-      authorAvatar: user.avatarUrl || null,
-      socketId: socket.id,
-      file: file || null,
-      createdAt: new Date().toISOString()
-    };
-
+    const msg = { id: uuidv4(), roomId, content: (content || '').slice(0, 1000),
+                  author: user.nickname, authorId: user.userId, authorColor: user.color,
+                  authorAvatar: user.avatarUrl || null, socketId: socket.id,
+                  file: file || null, createdAt: new Date().toISOString() };
     room.messages.push(msg);
     if (room.messages.length > 200) room.messages.shift();
     io.to(roomId).emit('groupMessage', msg);
   });
 
-  // 타이핑 인디케이터
+  // 타이핑
   socket.on('typing', ({ channel, roomId }) => {
     const user = onlineUsers[socket.id];
     if (!user) return;
     socket.broadcast.emit('userTyping', { socketId: socket.id, nickname: user.nickname, channel, roomId });
   });
-
   socket.on('stopTyping', ({ channel, roomId }) => {
     socket.broadcast.emit('userStopTyping', { socketId: socket.id, channel, roomId });
   });
 
-  // 연결 해제
   socket.on('disconnect', () => {
     const user = onlineUsers[socket.id];
     delete onlineUsers[socket.id];
     io.emit('onlineUsers', Object.values(onlineUsers));
-    if (user) {
-      io.emit('systemMessage', {
-        type: 'leave',
-        nickname: user.nickname,
-        message: `${user.nickname}님이 퇴장하셨습니다.`,
-        createdAt: new Date().toISOString()
-      });
-    }
-    console.log(`[연결 해제] ${socket.id}`);
+    if (user) io.emit('systemMessage', { type: 'leave', nickname: user.nickname, message: `${user.nickname}님이 퇴장하셨습니다.`, createdAt: new Date().toISOString() });
+    console.log(`[해제] ${socket.id}`);
   });
 });
 
 // =============================================
-// Render Keep-Alive (14분마다 자기 자신 핑)
+// Render Keep-Alive
 // =============================================
 if (process.env.RENDER_EXTERNAL_URL) {
   setInterval(() => {
-    https.get(process.env.RENDER_EXTERNAL_URL, (res) => {
-      console.log(`[Keep-Alive] 핑 완료 (${res.statusCode})`);
-    }).on('error', (e) => {
-      console.error('[Keep-Alive] 오류:', e.message);
-    });
+    https.get(process.env.RENDER_EXTERNAL_URL, (res) => console.log(`[Keep-Alive] ${res.statusCode}`))
+         .on('error', e => console.error('[Keep-Alive]', e.message));
   }, 14 * 60 * 1000);
-  console.log('[Keep-Alive] 14분 간격 자동 핑 활성화');
+  console.log('[Keep-Alive] 활성화');
 }
 
 // =============================================
@@ -528,11 +768,9 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n ====================================`);
   console.log(`  과천중 비밀게시판 서버 시작!`);
-  console.log(`  로컬: http://localhost:${PORT}`);
+  console.log(`  http://localhost:${PORT}`);
   console.log(` ====================================\n`);
-  console.log(`[데이터] 게시글 ${posts.length}개 로드됨`);
+  console.log(`[데이터] 게시글 ${posts.length}개 / 랭킹: ${rankingsData.lastWeek || '미계산'}`);
 });
 
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-});
+process.on('uncaughtException', (err) => console.error('Uncaught Exception:', err));
