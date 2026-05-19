@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MySocialSite — 커뮤니티</title>
+  <link rel="stylesheet" href="/style.css" />
+  <!-- Font Awesome 아이콘 -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" />
+</head>
+<body>
+
+  <!-- =========================================
+       닉네임 설정 모달 (첫 접속 시)
+       ========================================= -->
+  <div id="nicknameModal" class="modal-overlay">
+    <div class="modal-box nickname-modal">
+      <div class="modal-logo">
+        <div class="logo-icon"><i class="fa-solid fa-fire"></i></div>
+        <h1>MySocialSite</h1>
+        <p>소셜 커뮤니티에 오신 것을 환영합니다</p>
+      </div>
+      <div class="form-group">
+        <label>닉네임을 입력하세요</label>
+        <input type="text" id="nicknameInput" placeholder="예: 멋진유저123"
+               maxlength="20" autocomplete="off" />
+        <span class="input-hint">2~20자 이내로 입력해주세요</span>
+      </div>
+      <button id="setNicknameBtn" class="btn btn-primary btn-full">
+        <i class="fa-solid fa-arrow-right"></i>
+        시작하기
+      </button>
+    </div>
+  </div>
+
+  <!-- =========================================
+       이미지 모달 뷰어
+       ========================================= -->
+  <div id="imageModal" class="modal-overlay hidden" onclick="closeImageModal()">
+    <div class="image-modal-content" onclick="event.stopPropagation()">
+      <button class="image-modal-close" onclick="closeImageModal()"><i class="fa-solid fa-xmark"></i></button>
+      <img id="imageModalImg" src="" alt="이미지" />
+    </div>
+  </div>
+
+  <!-- =========================================
+       그룹 채팅방 생성 모달
+       ========================================= -->
+  <div id="createRoomModal" class="modal-overlay hidden">
+    <div class="modal-box">
+      <h3><i class="fa-solid fa-users"></i> 그룹 채팅방 만들기</h3>
+      <div class="form-group mt-16">
+        <label>방 이름</label>
+        <input type="text" id="roomNameInput" placeholder="예: 개발자 모임" maxlength="30" />
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeCreateRoomModal()">취소</button>
+        <button class="btn btn-primary" onclick="confirmCreateRoom()">
+          <i class="fa-solid fa-plus"></i> 만들기
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================
+       설정 모달
+       ========================================= -->
+  <div id="settingsModal" class="modal-overlay hidden">
+    <div class="modal-box">
+      <h3><i class="fa-solid fa-gear"></i> 설정</h3>
+      <div class="form-group mt-16">
+        <label>닉네임 변경</label>
+        <input type="text" id="changeNicknameInput" placeholder="새 닉네임" maxlength="20" />
+      </div>
+      <div class="form-group">
+        <label>프로필 색상</label>
+        <div class="color-picker">
+          <div class="color-opt" data-color="#667eea" style="background:#667eea"></div>
+          <div class="color-opt" data-color="#f093fb" style="background:#f093fb"></div>
+          <div class="color-opt" data-color="#4facfe" style="background:#4facfe"></div>
+          <div class="color-opt" data-color="#43e97b" style="background:#43e97b"></div>
+          <div class="color-opt" data-color="#fa709a" style="background:#fa709a"></div>
+          <div class="color-opt" data-color="#f6d365" style="background:#f6d365"></div>
+          <div class="color-opt" data-color="#a18cd1" style="background:#a18cd1"></div>
+          <div class="color-opt" data-color="#fd7043" style="background:#fd7043"></div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeSettingsModal()">닫기</button>
+        <button class="btn btn-primary" onclick="saveSettings()">
+          <i class="fa-solid fa-check"></i> 저장
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================
+       토스트 알림 컨테이너
+       ========================================= -->
+  <div id="toastContainer"></div>
+
+  <!-- =========================================
+       메인 앱 레이아웃
+       ========================================= -->
+  <div id="app" class="app hidden">
+
+    <!-- ── 왼쪽 사이드바 ── -->
+    <aside class="sidebar">
+      <!-- 로고 -->
+      <div class="sidebar-logo">
+        <div class="logo-icon-sm"><i class="fa-solid fa-fire"></i></div>
+        <span class="logo-text">MySocial</span>
+      </div>
+
+      <!-- 내 프로필 -->
+      <div class="sidebar-profile" onclick="openSettingsModal()">
+        <div class="avatar" id="sidebarAvatar"></div>
+        <div class="profile-info">
+          <span class="profile-name" id="sidebarNickname">닉네임</span>
+          <span class="profile-status"><i class="fa-solid fa-circle status-online"></i> 온라인</span>
+        </div>
+        <i class="fa-solid fa-gear profile-gear"></i>
+      </div>
+
+      <!-- 네비게이션 -->
+      <nav class="sidebar-nav">
+        <a class="nav-item active" data-view="home" onclick="switchView('home')">
+          <i class="fa-solid fa-house"></i>
+          <span>홈 피드</span>
+        </a>
+        <a class="nav-item" data-view="explore" onclick="switchView('explore')">
+          <i class="fa-solid fa-compass"></i>
+          <span>탐색</span>
+        </a>
+        <a class="nav-item" data-view="chat" onclick="switchView('chat')">
+          <i class="fa-solid fa-message"></i>
+          <span>채팅</span>
+          <span class="nav-badge hidden" id="chatBadge">0</span>
+        </a>
+        <a class="nav-item" data-view="profile" onclick="switchView('profile')">
+          <i class="fa-solid fa-user"></i>
+          <span>내 프로필</span>
+        </a>
+      </nav>
+
+      <!-- 온라인 사용자 -->
+      <div class="sidebar-section">
+        <div class="section-title">
+          <span>온라인</span>
+          <span id="onlineCount" class="badge-count">0</span>
+        </div>
+        <div id="onlineUsersList" class="online-list"></div>
+      </div>
+
+      <!-- 그룹 채팅방 목록 -->
+      <div class="sidebar-section">
+        <div class="section-title">
+          <span>채팅방</span>
+          <button class="icon-btn" onclick="openCreateRoomModal()" title="방 만들기">
+            <i class="fa-solid fa-plus"></i>
+          </button>
+        </div>
+        <div id="groupRoomsList" class="room-list"></div>
+      </div>
+    </aside>
+
+    <!-- ── 메인 콘텐츠 ── -->
+    <main class="main-content">
+
+      <!-- 상단 바 -->
+      <header class="topbar">
+        <button class="mobile-menu-btn" onclick="toggleSidebar()">
+          <i class="fa-solid fa-bars"></i>
+        </button>
+        <div class="search-wrap">
+          <i class="fa-solid fa-magnifying-glass search-icon"></i>
+          <input type="text" id="searchInput" class="search-input"
+                 placeholder="게시글 검색..." />
+          <button class="search-clear hidden" id="searchClear" onclick="clearSearch()">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <div class="topbar-actions">
+          <button class="icon-btn" onclick="openSettingsModal()" title="설정">
+            <i class="fa-solid fa-gear"></i>
+          </button>
+        </div>
+      </header>
+
+      <!-- ─── 홈 피드 뷰 ─── -->
+      <div id="view-home" class="view active">
+
+        <!-- 게시글 작성 카드 -->
+        <div class="post-creator card">
+          <div class="post-creator-top">
+            <div class="avatar sm" id="creatorAvatar"></div>
+            <textarea id="postContent" class="post-textarea"
+                      placeholder="지금 무슨 생각을 하고 계신가요?" rows="3"></textarea>
+          </div>
+
+          <!-- 파일 첨부 미리보기 -->
+          <div id="filePreviewArea" class="file-preview-area hidden"></div>
+
+          <!-- 드래그 앤 드롭 영역 -->
+          <div id="dropZone" class="drop-zone hidden">
+            <i class="fa-solid fa-cloud-arrow-up"></i>
+            <span>파일을 여기에 드롭하세요</span>
+          </div>
+
+          <div class="post-creator-bottom">
+            <div class="post-actions-left">
+              <label class="icon-btn" for="fileInput" title="파일 첨부">
+                <i class="fa-solid fa-image"></i>
+              </label>
+              <input type="file" id="fileInput" multiple accept="image/*,video/*,.pdf,.txt,.zip,.doc,.docx" hidden />
+              <button class="icon-btn emoji-toggle" onclick="toggleEmojiPicker()" title="이모지">
+                <i class="fa-regular fa-face-smile"></i>
+              </button>
+            </div>
+            <div class="post-char-count">
+              <span id="charCount">0</span>/2000
+            </div>
+            <button id="submitPostBtn" class="btn btn-primary btn-sm" onclick="submitPost()">
+              <i class="fa-solid fa-paper-plane"></i>
+              게시하기
+            </button>
+          </div>
+
+          <!-- 이모지 피커 -->
+          <div id="emojiPicker" class="emoji-picker hidden"></div>
+        </div>
+
+        <!-- 피드 로딩 -->
+        <div id="feedLoading" class="feed-loading hidden">
+          <div class="spinner"></div>
+        </div>
+
+        <!-- 게시글 피드 -->
+        <div id="postFeed" class="post-feed"></div>
+
+        <!-- 더 불러오기 트리거 (무한 스크롤) -->
+        <div id="loadMoreTrigger" class="load-more-trigger"></div>
+
+        <!-- 피드 끝 -->
+        <div id="feedEnd" class="feed-end hidden">
+          <i class="fa-solid fa-check-circle"></i>
+          <span>모든 게시글을 불러왔습니다</span>
+        </div>
+      </div>
+
+      <!-- ─── 탐색 뷰 ─── -->
+      <div id="view-explore" class="view">
+        <div class="explore-header">
+          <h2>탐색하기</h2>
+          <p>커뮤니티의 다양한 이야기를 찾아보세요</p>
+        </div>
+        <div id="exploreGrid" class="explore-grid"></div>
+      </div>
+
+      <!-- ─── 채팅 뷰 ─── -->
+      <div id="view-chat" class="view">
+        <div class="chat-layout">
+          <!-- 채팅 목록 패널 -->
+          <div class="chat-list-panel">
+            <div class="chat-tabs">
+              <button class="chat-tab active" data-channel="global" onclick="switchChatTab('global')">
+                <i class="fa-solid fa-earth-asia"></i> 전체
+              </button>
+              <button class="chat-tab" data-channel="dm" onclick="switchChatTab('dm')">
+                <i class="fa-solid fa-user-group"></i> DM
+              </button>
+              <button class="chat-tab" data-channel="group" onclick="switchChatTab('group')">
+                <i class="fa-solid fa-users"></i> 그룹
+              </button>
+            </div>
+
+            <!-- 전체 채팅 -->
+            <div class="chat-channel-list" id="chatList-global">
+              <div class="chat-channel-item active" onclick="openGlobalChat()">
+                <div class="channel-icon"><i class="fa-solid fa-earth-asia"></i></div>
+                <div class="channel-info">
+                  <span class="channel-name">전체 채팅</span>
+                  <span class="channel-desc">모든 사용자와 대화</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- DM 목록 -->
+            <div class="chat-channel-list hidden" id="chatList-dm">
+              <div id="dmList" class="dm-list">
+                <div class="empty-state-sm">
+                  <i class="fa-solid fa-message"></i>
+                  <p>온라인 사용자를 클릭하여 DM을 시작하세요</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 그룹 목록 -->
+            <div class="chat-channel-list hidden" id="chatList-group">
+              <div id="groupList" class="group-list">
+                <div class="empty-state-sm">
+                  <i class="fa-solid fa-users"></i>
+                  <p>사이드바에서 + 버튼으로 방을 만들어보세요</p>
+                </div>
+              </div>
+              <button class="btn btn-ghost btn-sm btn-full mt-8" onclick="openCreateRoomModal()">
+                <i class="fa-solid fa-plus"></i> 방 만들기
+              </button>
+            </div>
+          </div>
+
+          <!-- 채팅 메시지 패널 -->
+          <div class="chat-message-panel">
+            <!-- 채팅 헤더 -->
+            <div class="chat-header">
+              <div class="chat-header-info">
+                <div class="chat-header-icon" id="chatHeaderIcon">
+                  <i class="fa-solid fa-earth-asia"></i>
+                </div>
+                <div>
+                  <div class="chat-header-name" id="chatHeaderName">전체 채팅</div>
+                  <div class="chat-header-desc" id="chatHeaderDesc">모든 사용자와 대화</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 메시지 영역 -->
+            <div id="messageArea" class="message-area">
+              <div class="chat-welcome">
+                <div class="chat-welcome-icon"><i class="fa-solid fa-earth-asia"></i></div>
+                <h3>전체 채팅에 오신 것을 환영합니다!</h3>
+                <p>모든 접속자와 실시간으로 대화할 수 있습니다</p>
+              </div>
+            </div>
+
+            <!-- 타이핑 인디케이터 -->
+            <div id="typingIndicator" class="typing-indicator hidden">
+              <div class="typing-dots"><span></span><span></span><span></span></div>
+              <span id="typingText">누군가 입력 중...</span>
+            </div>
+
+            <!-- 메시지 입력 -->
+            <div class="message-input-wrap">
+              <label class="icon-btn" for="chatFileInput" title="파일 첨부">
+                <i class="fa-solid fa-paperclip"></i>
+              </label>
+              <input type="file" id="chatFileInput" hidden />
+              <div id="chatFilePreview" class="chat-file-preview hidden"></div>
+              <input type="text" id="messageInput" class="message-input"
+                     placeholder="메시지를 입력하세요..." maxlength="1000" />
+              <button class="icon-btn emoji-toggle-chat" onclick="toggleEmojiPickerChat()" title="이모지">
+                <i class="fa-regular fa-face-smile"></i>
+              </button>
+              <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+                <i class="fa-solid fa-paper-plane"></i>
+              </button>
+            </div>
+            <div id="emojiPickerChat" class="emoji-picker emoji-picker-chat hidden"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── 프로필 뷰 ─── -->
+      <div id="view-profile" class="view">
+        <div class="profile-page">
+          <div class="profile-cover"></div>
+          <div class="profile-body">
+            <div class="profile-avatar-large" id="profileAvatarLarge"></div>
+            <div class="profile-meta">
+              <h2 id="profileName">닉네임</h2>
+              <p class="profile-bio">소셜 커뮤니티 회원</p>
+              <div class="profile-stats">
+                <div class="stat-item">
+                  <span class="stat-num" id="myPostCount">0</span>
+                  <span class="stat-label">게시글</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-num" id="myLikeCount">0</span>
+                  <span class="stat-label">받은 좋아요</span>
+                </div>
+              </div>
+              <button class="btn btn-outline mt-16" onclick="openSettingsModal()">
+                <i class="fa-solid fa-pen"></i> 프로필 편집
+              </button>
+            </div>
+            <div class="profile-posts">
+              <h3>내 게시글</h3>
+              <div id="myPostsFeed" class="post-feed"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- ── 오른쪽 사이드바 (데스크톱) ── -->
+    <aside class="right-sidebar">
+      <div class="right-sidebar-header">멤버 목록</div>
+      <div class="widget">
+        <div class="widget-title">
+          <i class="fa-solid fa-fire"></i>
+          트렌딩 태그
+        </div>
+        <div id="trendingList" class="trending-list">
+          <div class="trending-item">#소셜미디어</div>
+          <div class="trending-item">#개발자</div>
+          <div class="trending-item">#Node.js</div>
+          <div class="trending-item">#디자인</div>
+          <div class="trending-item">#일상</div>
+        </div>
+      </div>
+      <div class="widget">
+        <div class="widget-title">
+          <i class="fa-solid fa-circle" style="color:#23a55a;font-size:8px"></i>
+          온라인 — <span id="onlineCountRight">0</span>명
+        </div>
+        <div id="rightOnlineList" class="right-online-list"></div>
+      </div>
+    </aside>
+
+  </div><!-- /app -->
+
+  <!-- Socket.io 클라이언트 -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- 앱 스크립트 -->
+  <script src="/app.js"></script>
+</body>
+</html>
