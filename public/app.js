@@ -643,13 +643,19 @@ function createPostElement(post) {
         </div>
         <div class="post-time">${timeAgo}${post.isAnnouncement ? ' · <span style="color:var(--red);font-weight:700">📢 공지</span>' : ''}</div>
       </div>
-      ${isOwner ? `
-        <div class="post-menu">
-          <button class="icon-btn" onclick="deletePost('${post.id}')" title="삭제"
-                  style="color:var(--red)">
-            <i class="fa-solid fa-trash-can"></i>
+      <div class="post-menu" style="display:flex;gap:2px">
+        ${state.adminVerified ? `
+          <button class="icon-btn" onclick="copyPostId('${post.id}')" title="ID 복사" style="font-size:11px;color:var(--text-3)">
+            ID
           </button>
-        </div>` : ''}
+          <button class="icon-btn" onclick="adminQuickDelete('${post.id}')" title="강제삭제" style="color:var(--red)">
+            <i class="fa-solid fa-shield-halved"></i>
+          </button>` : ''}
+        ${isOwner ? `
+          <button class="icon-btn" onclick="deletePost('${post.id}')" title="삭제" style="color:var(--red)">
+            <i class="fa-solid fa-trash-can"></i>
+          </button>` : ''}
+      </div>
     </div>
     ${post.content ? `<div class="post-content">${escHtml(post.content)}</div>` : ''}
     ${imagesHtml}
@@ -1682,6 +1688,55 @@ async function quickWarn(socketId, nickname) {
   const message = prompt(`${nickname}에게 보낼 경고 메시지:`);
   if (!message) return;
   await doWarn(socketId, message);
+}
+
+function copyPostId(postId) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(postId).then(() => showToast('게시글 ID가 복사되었습니다!', 'success'));
+  } else {
+    showToast('ID: ' + postId, 'info');
+  }
+}
+
+async function adminQuickDelete(postId) {
+  if (!confirm('이 게시글을 강제 삭제하시겠습니까?')) return;
+  try {
+    const res = await fetch(`/api/admin/posts/${postId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: state.adminPw }),
+    });
+    if (res.ok) {
+      showToast('게시글이 삭제되었습니다.', 'success');
+    } else {
+      const d = await res.json();
+      showToast(d.error || '삭제 실패', 'error');
+    }
+  } catch {
+    showToast('삭제 오류', 'error');
+  }
+}
+
+async function adminDeletePost() {
+  const postId = $('deletePostIdInput').value.trim();
+  if (!postId) { showToast('게시글 ID를 입력하세요.', 'warning'); return; }
+  if (!confirm('정말 이 게시글을 강제 삭제하시겠습니까?')) return;
+  try {
+    const res = await fetch(`/api/admin/posts/${postId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: state.adminPw }),
+    });
+    if (res.ok) {
+      $('deletePostIdInput').value = '';
+      showToast('게시글이 삭제되었습니다.', 'success');
+    } else {
+      const d = await res.json();
+      showToast(d.error || '삭제 실패', 'error');
+    }
+  } catch {
+    showToast('삭제 오류', 'error');
+  }
 }
 
 async function doWarn(targetSocketId, message) {
