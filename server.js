@@ -12,6 +12,63 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 
+// =============================================
+// MongoDB 지원 (MONGODB_URI 환경변수 필요)
+// =============================================
+let mongoose = null, useDB = false;
+async function initMongo() {
+  if (!process.env.MONGODB_URI) {
+    console.log('[DB] MONGODB_URI 없음 → JSON 파일 사용 (Render 재시작 시 데이터 초기화됨)');
+    console.log('[DB] MongoDB Atlas URI를 Render 환경변수에 MONGODB_URI로 추가하면 영구저장됩니다.');
+    return;
+  }
+  try {
+    mongoose = require('mongoose');
+    await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
+    console.log('[DB] MongoDB 연결 성공! 데이터 영구저장 활성화');
+    useDB = true;
+    await syncFromDB();
+  } catch(e) {
+    console.error('[DB] MongoDB 연결 실패, JSON 파일로 폴백:', e.message);
+  }
+}
+
+// Key-Value 컬렉션 (단순 구조)
+function getKVModel() {
+  if (!mongoose) return null;
+  if (mongoose.models.KV) return mongoose.models.KV;
+  const s = new mongoose.Schema({ key: { type: String, unique: true }, value: mongoose.Schema.Types.Mixed, updatedAt: Date });
+  return mongoose.model('KV', s);
+}
+
+async function dbGet(key, fallback) {
+  try {
+    const KV = getKVModel();
+    if (!KV) return fallback;
+    const doc = await KV.findOne({ key });
+    return doc ? doc.value : fallback;
+  } catch { return fallback; }
+}
+
+async function dbSet(key, value) {
+  try {
+    const KV = getKVModel();
+    if (!KV) return;
+    await KV.findOneAndUpdate({ key }, { value, updatedAt: new Date() }, { upsert: true, new: true });
+  } catch(e) { console.error(`[DB set ${key}]`, e.message); }
+}
+
+async function syncFromDB() {
+  posts        = await dbGet('posts',      posts);
+  comments     = await dbGet('comments',   comments);
+  likes        = await dbGet('likes',      likes);
+  rankingsData = await dbGet('rankings',   rankingsData);
+  members      = await dbGet('members',    members);
+  blockGames   = await dbGet('blockGames', blockGames);
+  migrateLikes();
+  console.log(`[DB] 로드 완료 - 게시글 ${posts.length}개, 멤버 ${Object.keys(members).length}명`);
+}
+
 const app = express();
 const server = http.createServer(app);
 
@@ -59,7 +116,11 @@ let rankingsData = loadJSON('rankings.json', {
 
 // 멤버 (방문자 기록)
 let members = loadJSON('members.json', {}); // { userId: { nickname, color, avatarUrl, bio, firstSeen, lastSeen } }
-const saveMembers = () => saveJSON('members.json', members);
+const saveMembers = () => { saveJSON('members.json', members); if (useDB) dbSet('members', members); };
+
+// 블록 게임 (유저 제작)
+let blockGames = loadJSON('block-games.json', []);
+const saveBlockGames = () => { saveJSON('block-games.json', blockGames); if (useDB) dbSet('blockGames', blockGames); };
 
 // 인메모리
 let onlineUsers    = {};
@@ -98,10 +159,10 @@ migrateLikes();
 // =============================================
 // 저장 헬퍼
 // =============================================
-const savePosts    = () => saveJSON('posts.json',    posts);
-const saveComments = () => saveJSON('comments.json', comments);
-const saveLikes    = () => saveJSON('likes.json',    likes);
-const saveRankings = () => saveJSON('rankings.json', rankingsData);
+const savePosts    = () => { saveJSON('posts.json',    posts);        if (useDB) dbSet('posts',    posts); };
+const saveComments = () => { saveJSON('comments.json', comments);     if (useDB) dbSet('comments', comments); };
+const saveLikes    = () => { saveJSON('likes.json',    likes);         if (useDB) dbSet('likes',    likes); };
+const saveRankings = () => { saveJSON('rankings.json', rankingsData);  if (useDB) dbSet('rankings', rankingsData); };
 
 // =============================================
 // 좋아요 유틸
@@ -637,6 +698,91 @@ app.post('/api/admin/warn', (req, res) => {
   res.json({ success: true });
 });
 
+// =============================================
+// API - 블록 코딩 게임
+// =============================================
+app.get('/api/block-games', (req, res) => {
+  res.json(blockGames.filter(g => g.status === 'approved').slice().reverse().slice(0, 50));
+});
+
+app.get('/api/block-games/pending', (req, res) => {
+  const { password } = req.query;
+  if (!isAdmin(password)) return res.status(401).json({ error: '권한 없음' });
+  res.json(blockGames.filter(g => g.status === 'pending').slice().reverse());
+});
+
+app.get('/api/block-games/:id', (req, res) => {
+  const game = blockGames.find(g => g.id === req.params.id);
+  if (!game) return res.status(404).json({ error: '게임 없음' });
+  res.json(game);
+});
+
+app.post('/api/block-games', (req, res) => {
+  const { userId, nickname, title, program, thumbnail } = req.body;
+  if (!title?.trim() || !program) return res.status(400).json({ error: '제목과 프로그램 필요' });
+  const pending = blockGames.filter(g => g.userId === userId && g.status === 'pending').length;
+  if (pending >= 3) return res.status(429).json({ error: '심사 대기 중인 게임이 3개 이상입니다.' });
+  const game = {
+    id: uuidv4(),
+    userId: userId || 'unknown',
+    nickname: (nickname || '익명').slice(0, 20),
+    title: title.trim().slice(0, 50),
+    program,
+    thumbnail: thumbnail || null,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+    approvedAt: null,
+    adminComment: '',
+    playCount: 0,
+  };
+  blockGames.push(game);
+  saveBlockGames();
+  res.json({ success: true, id: game.id });
+});
+
+app.post('/api/block-games/:id/approve', (req, res) => {
+  const { password, comment } = req.body;
+  if (!isAdmin(password)) return res.status(401).json({ error: '권한 없음' });
+  const game = blockGames.find(g => g.id === req.params.id);
+  if (!game) return res.status(404).json({ error: '게임 없음' });
+  game.status = 'approved';
+  game.adminComment = (comment || '').slice(0, 200);
+  game.approvedAt = new Date().toISOString();
+  saveBlockGames();
+  const tu = Object.values(onlineUsers).find(u => u.userId === game.userId);
+  if (tu) io.to(tu.socketId).emit('blockGameApproved', { gameId: game.id, title: game.title });
+  res.json({ success: true });
+});
+
+app.post('/api/block-games/:id/reject', (req, res) => {
+  const { password, comment } = req.body;
+  if (!isAdmin(password)) return res.status(401).json({ error: '권한 없음' });
+  const game = blockGames.find(g => g.id === req.params.id);
+  if (!game) return res.status(404).json({ error: '게임 없음' });
+  game.status = 'rejected';
+  game.adminComment = (comment || '').slice(0, 200);
+  saveBlockGames();
+  const tu = Object.values(onlineUsers).find(u => u.userId === game.userId);
+  if (tu) io.to(tu.socketId).emit('blockGameRejected', { gameId: game.id, title: game.title, comment: game.adminComment });
+  res.json({ success: true });
+});
+
+app.delete('/api/block-games/:id', (req, res) => {
+  const { password } = req.body;
+  if (!isAdmin(password)) return res.status(401).json({ error: '권한 없음' });
+  const idx = blockGames.findIndex(g => g.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: '게임 없음' });
+  blockGames.splice(idx, 1);
+  saveBlockGames();
+  res.json({ success: true });
+});
+
+app.post('/api/block-games/:id/play', (req, res) => {
+  const game = blockGames.find(g => g.id === req.params.id);
+  if (game) { game.playCount = (game.playCount || 0) + 1; saveBlockGames(); }
+  res.json({ success: true });
+});
+
 // 온라인 유저 목록 (관리자용)
 app.get('/api/admin/users', (req, res) => {
   const { password } = req.query;
@@ -883,13 +1029,16 @@ if (process.env.RENDER_EXTERNAL_URL) {
 // =============================================
 // 서버 시작
 // =============================================
+// MongoDB 초기화 후 서버 시작
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n ====================================`);
-  console.log(`  과천중 비밀게시판 서버 시작!`);
-  console.log(`  http://localhost:${PORT}`);
-  console.log(` ====================================\n`);
-  console.log(`[데이터] 게시글 ${posts.length}개 / 랭킹: ${rankingsData.lastWeek || '미계산'}`);
+initMongo().finally(() => {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n ====================================`);
+    console.log(`  과천중 비밀게시판 서버 시작!`);
+    console.log(`  http://localhost:${PORT}`);
+    console.log(` ====================================\n`);
+    console.log(`[데이터] 게시글 ${posts.length}개 / 랭킹: ${rankingsData.lastWeek || '미계산'}`);
+  });
 });
 
 process.on('uncaughtException', (err) => console.error('Uncaught Exception:', err));

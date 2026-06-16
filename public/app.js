@@ -2100,15 +2100,20 @@ function openGame(type) {
   gameState.mode = null;
   gameState.roomId = null;
   gameState.isOver = false;
+  gameState.gomokuCanvas = null;
+  gameState.gomokuCtx = null;
 
-  const titles = { gomoku: '⚫ 오목', tictactoe: '❌ 틱택토', snake: '🐍 뱀 게임' };
-  $('gameModalTitle').textContent = titles[type];
+  const titles = { gomoku:'⚫ 오목', tictactoe:'❌ 틱택토', snake:'🐍 뱀 게임', chess:'♟ 체스', shooting:'🔫 우주 사격', archery:'🎯 양궁' };
+  $('gameModalTitle').textContent = titles[type] || type;
   $('gameModeSelect').classList.remove('hidden');
   $('multiLobby').classList.add('hidden');
   $('multiWaiting').classList.add('hidden');
   $('gameBoard').classList.add('hidden');
 
-  if (type === 'snake') {
+  const singleOnly = ['snake', 'shooting', 'archery'];
+  const multiSupport = ['gomoku', 'tictactoe', 'chess'];
+
+  if (singleOnly.includes(type)) {
     $('gameModeSelect').innerHTML = `
       <div class="game-mode-btns">
         <button class="btn btn-primary" onclick="startGame('ai')"><i class="fa-solid fa-play"></i> 시작하기</button>
@@ -2127,9 +2132,10 @@ function openGame(type) {
 
 function closeGame() {
   if (gameState.snakeTimer) { clearInterval(gameState.snakeTimer); gameState.snakeTimer = null; }
+  if (gameState._shootCleanup) { gameState._shootCleanup(); gameState._shootCleanup = null; }
   if (gameState.roomId) socket.emit('leaveGameRoom', { roomId: gameState.roomId });
   $('gameModal').classList.add('hidden');
-  gameState = { type: null, mode: null, roomId: null, myTurn: false, mySymbol: null, board: null, isOver: false, snakeTimer: null };
+  gameState = { type:null, mode:null, roomId:null, myTurn:false, mySymbol:null, board:null, isOver:false, snakeTimer:null, gomokuCanvas:null, gomokuCtx:null };
 }
 
 function startGame(mode) {
@@ -2139,9 +2145,13 @@ function startGame(mode) {
   $('multiWaiting').classList.add('hidden');
   $('gameBoard').classList.remove('hidden');
 
-  if (gameState.type === 'gomoku') initGomoku(mode);
-  else if (gameState.type === 'tictactoe') initTicTacToe(mode);
-  else if (gameState.type === 'snake') initSnake();
+  const t = gameState.type;
+  if (t === 'gomoku')    initGomoku(mode);
+  else if (t === 'tictactoe') initTicTacToe(mode);
+  else if (t === 'snake')    initSnake();
+  else if (t === 'chess')    initChess(mode);
+  else if (t === 'shooting') initShooting();
+  else if (t === 'archery')  initArchery();
 }
 
 function restartGame() {
@@ -2212,10 +2222,7 @@ socket.on('gameRoomReady', (room) => {
 
 socket.on('gameRoomError', ({ message }) => showToast(message, 'error'));
 
-socket.on('gameMove', ({ move }) => {
-  if (gameState.type === 'gomoku') applyGomokuMove(move, false);
-  else if (gameState.type === 'tictactoe') applyTTTMove(move.idx, false);
-});
+// gameMove 통합 핸들러 (체스 섹션의 socket.on으로 이동)
 
 socket.on('gameOpponentLeft', () => {
   showToast('상대방이 게임을 떠났습니다.', 'warning');
@@ -2224,34 +2231,92 @@ socket.on('gameOpponentLeft', () => {
 });
 
 // =============================================
-// 오목
+// 오목 (캔버스 기반 - 클릭 버그 수정)
 // =============================================
 const GOMOKU_SIZE = 13;
+const GOMOKU_CELL = 34;
+const GOMOKU_PAD  = 22;
 
 function initGomoku(mode) {
   gameState.board = Array(GOMOKU_SIZE).fill(null).map(() => Array(GOMOKU_SIZE).fill(null));
   gameState.isOver = false;
   if (mode === 'ai') { gameState.mySymbol = '⚫'; gameState.myTurn = true; }
 
+  const canvasSize = GOMOKU_CELL * (GOMOKU_SIZE - 1) + GOMOKU_PAD * 2;
   const inner = $('gameBoardInner');
+  inner.style.cssText = 'display:flex;justify-content:center;padding:8px 0;overflow-x:auto';
   inner.innerHTML = '';
-  const board = document.createElement('div');
-  board.className = 'gomoku-board';
-  board.style.gridTemplateColumns = `repeat(${GOMOKU_SIZE}, 30px)`;
 
-  for (let r = 0; r < GOMOKU_SIZE; r++) {
-    for (let c = 0; c < GOMOKU_SIZE; c++) {
-      const cell = document.createElement('div');
-      cell.className = 'gomoku-cell hline vline';
-      const span = document.createElement('span');
-      span.dataset.r = r; span.dataset.c = c;
-      span.onclick = () => handleGomokuClick(r, c);
-      cell.appendChild(span);
-      board.appendChild(cell);
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasSize; canvas.height = canvasSize;
+  canvas.style.cssText = 'cursor:pointer;max-width:100%;border-radius:8px;touch-action:none';
+  inner.appendChild(canvas);
+
+  gameState.gomokuCanvas = canvas;
+  gameState.gomokuCtx = canvas.getContext('2d');
+  drawGomokuBoard();
+
+  function getCell(e) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / rect.width, sy = canvas.height / rect.height;
+    const mx = (e.clientX - rect.left) * sx;
+    const my = (e.clientY - rect.top) * sy;
+    const c = Math.round((mx - GOMOKU_PAD) / GOMOKU_CELL);
+    const r = Math.round((my - GOMOKU_PAD) / GOMOKU_CELL);
+    return (c >= 0 && c < GOMOKU_SIZE && r >= 0 && r < GOMOKU_SIZE) ? { r, c } : null;
+  }
+
+  canvas.addEventListener('click', (e) => {
+    const cell = getCell(e);
+    if (cell) handleGomokuClick(cell.r, cell.c);
+  });
+
+  updateGomokuStatus();
+}
+
+function drawGomokuBoard() {
+  const canvas = gameState.gomokuCanvas;
+  const ctx    = gameState.gomokuCtx;
+  if (!ctx) return;
+  const S = GOMOKU_SIZE, C = GOMOKU_CELL, P = GOMOKU_PAD;
+  const W = C * (S - 1) + P * 2;
+
+  // 배경 (나무색)
+  ctx.fillStyle = '#dcb468';
+  ctx.fillRect(0, 0, W, W);
+
+  // 격자선
+  ctx.strokeStyle = '#a0763c';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < S; i++) {
+    ctx.beginPath(); ctx.moveTo(P + i*C, P); ctx.lineTo(P + i*C, P + (S-1)*C); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(P, P + i*C); ctx.lineTo(P + (S-1)*C, P + i*C); ctx.stroke();
+  }
+
+  // 화점 (별자리)
+  ctx.fillStyle = '#a0763c';
+  [[3,3],[3,9],[9,3],[9,9],[6,6]].forEach(([sr,sc]) => {
+    if (sr < S && sc < S) {
+      ctx.beginPath(); ctx.arc(P + sc*C, P + sr*C, 3.5, 0, Math.PI*2); ctx.fill();
+    }
+  });
+
+  // 돌 그리기
+  for (let r = 0; r < S; r++) {
+    for (let c = 0; c < S; c++) {
+      if (gameState.board[r][c]) {
+        const isBlack = gameState.board[r][c] === '⚫';
+        const x = P + c*C, y = P + r*C, rad = C * 0.43;
+        const g = ctx.createRadialGradient(x - rad*.3, y - rad*.3, rad*.1, x, y, rad);
+        if (isBlack) { g.addColorStop(0, '#666'); g.addColorStop(1, '#111'); }
+        else          { g.addColorStop(0, '#fff'); g.addColorStop(1, '#ccc'); }
+        ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = 5; ctx.shadowOffsetX = 2; ctx.shadowOffsetY = 2;
+        ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI*2);
+        ctx.fillStyle = g; ctx.fill();
+        ctx.shadowColor = 'transparent';
+      }
     }
   }
-  inner.appendChild(board);
-  updateGomokuStatus();
 }
 
 function handleGomokuClick(r, c) {
@@ -2261,15 +2326,14 @@ function handleGomokuClick(r, c) {
     socket.emit('gameMove', { roomId: gameState.roomId, move: { r, c } });
   }
   if (gameState.mode === 'ai' && !gameState.isOver) {
-    setTimeout(() => { const move = gomokuAI(); if (move) applyGomokuMove(move, false); }, 300);
+    setTimeout(() => { const move = gomokuAI(); if (move) applyGomokuMove(move, false); }, 350);
   }
 }
 
 function applyGomokuMove({ r, c }, isMe) {
   const symbol = isMe ? gameState.mySymbol : (gameState.mySymbol === '⚫' ? '⚪' : '⚫');
   gameState.board[r][c] = symbol;
-  const span = $('gameBoardInner').querySelector(`span[data-r="${r}"][data-c="${c}"]`);
-  if (span) span.textContent = symbol;
+  drawGomokuBoard();
   gameState.myTurn = !isMe;
   if (checkGomokuWin(r, c, symbol)) {
     gameState.isOver = true;
@@ -2474,3 +2538,1003 @@ function randomFood(snake, cols, rows) {
   while (snake.some(s=>s.x===f.x&&s.y===f.y));
   return f;
 }
+
+// =============================================
+// 체스
+// =============================================
+const CHESS_PIECES = {
+  wK:'♔', wQ:'♕', wR:'♖', wB:'♗', wN:'♘', wP:'♙',
+  bK:'♚', bQ:'♛', bR:'♜', bB:'♝', bN:'♞', bP:'♟'
+};
+
+function initChess(mode) {
+  // 초기 배치
+  const INIT = [
+    ['bR','bN','bB','bQ','bK','bB','bN','bR'],
+    ['bP','bP','bP','bP','bP','bP','bP','bP'],
+    [null,null,null,null,null,null,null,null],
+    [null,null,null,null,null,null,null,null],
+    [null,null,null,null,null,null,null,null],
+    [null,null,null,null,null,null,null,null],
+    ['wP','wP','wP','wP','wP','wP','wP','wP'],
+    ['wR','wN','wB','wQ','wK','wB','wN','wR'],
+  ];
+  gameState.board = INIT.map(r => [...r]);
+  gameState.isOver = false;
+  gameState.mySymbol = 'w'; // 플레이어는 흰색
+  gameState.myTurn = true;
+  gameState.selected = null;
+  gameState.possibleMoves = [];
+
+  const inner = $('gameBoardInner');
+  inner.style.cssText = 'display:flex;justify-content:center;padding:8px 0';
+  inner.innerHTML = '';
+  renderChessBoard();
+  $('gameStatus').textContent = '흰색(♙)이 먼저 시작합니다!';
+}
+
+function renderChessBoard() {
+  const inner = $('gameBoardInner');
+  inner.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'chess-board';
+
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const cell = document.createElement('div');
+      const isLight = (r + c) % 2 === 0;
+      cell.className = 'chess-cell ' + (isLight ? 'light' : 'dark');
+
+      if (gameState.selected && gameState.selected[0] === r && gameState.selected[1] === c)
+        cell.classList.add('selected');
+      if (gameState.possibleMoves.some(([pr,pc]) => pr === r && pc === c))
+        cell.classList.add('possible');
+
+      const piece = gameState.board[r][c];
+      if (piece) cell.textContent = CHESS_PIECES[piece];
+
+      cell.addEventListener('click', () => handleChessClick(r, c));
+      grid.appendChild(cell);
+    }
+  }
+  inner.appendChild(grid);
+}
+
+function handleChessClick(r, c) {
+  if (gameState.isOver || !gameState.myTurn) return;
+  const piece = gameState.board[r][c];
+
+  // 이동 가능한 칸 클릭
+  if (gameState.selected && gameState.possibleMoves.some(([pr,pc]) => pr === r && pc === c)) {
+    applyChessMove(gameState.selected[0], gameState.selected[1], r, c, true);
+    return;
+  }
+
+  // 내 말 선택
+  if (piece && piece.startsWith(gameState.mySymbol)) {
+    gameState.selected = [r, c];
+    gameState.possibleMoves = getChessMoves(r, c);
+    renderChessBoard();
+    return;
+  }
+
+  // 선택 취소
+  gameState.selected = null;
+  gameState.possibleMoves = [];
+  renderChessBoard();
+}
+
+function applyChessMove(fr, fc, tr, tc, isMe) {
+  const captured = gameState.board[tr][tc];
+  gameState.board[tr][tc] = gameState.board[fr][fc];
+  gameState.board[fr][fc] = null;
+
+  // 폰 승급
+  if (gameState.board[tr][tc] === 'wP' && tr === 0) gameState.board[tr][tc] = 'wQ';
+  if (gameState.board[tr][tc] === 'bP' && tr === 7) gameState.board[tr][tc] = 'bQ';
+
+  gameState.selected = null;
+  gameState.possibleMoves = [];
+
+  if (captured === 'bK' || captured === 'wK') {
+    gameState.isOver = true;
+    renderChessBoard();
+    $('gameStatus').textContent = isMe ? '🎉 승리! 왕을 잡았습니다!' : '😢 패배! 왕을 잡혔습니다!';
+    if (gameState.mode === 'multi') socket.emit('gameEnd', { roomId: gameState.roomId, result: {} });
+    return;
+  }
+
+  gameState.myTurn = !isMe;
+  renderChessBoard();
+
+  if (gameState.mode === 'multi' && isMe) {
+    socket.emit('gameMove', { roomId: gameState.roomId, move: { fr, fc, tr, tc } });
+    $('gameStatus').textContent = '상대방 차례...';
+  } else if (gameState.mode === 'ai' && isMe && !gameState.isOver) {
+    $('gameStatus').textContent = 'AI 생각 중...';
+    setTimeout(chessAIMove, 400);
+  }
+}
+
+function getChessMoves(r, c) {
+  const piece = gameState.board[r][c];
+  if (!piece) return [];
+  const color = piece[0], type = piece[1];
+  const moves = [];
+  const enemy = color === 'w' ? 'b' : 'w';
+  const dir = color === 'w' ? -1 : 1;
+
+  const inBounds = (r,c) => r>=0&&r<8&&c>=0&&c<8;
+  const isEmpty = (r,c) => inBounds(r,c) && !gameState.board[r][c];
+  const isEnemy = (r,c) => inBounds(r,c) && gameState.board[r][c]?.startsWith(enemy);
+  const canGo = (r,c) => isEmpty(r,c) || isEnemy(r,c);
+
+  const slide = (drs, dcs) => {
+    for (let i=0;i<drs.length;i++) {
+      let nr=r+drs[i], nc=c+dcs[i];
+      while (inBounds(nr,nc)) {
+        if (gameState.board[nr][nc]) { if (isEnemy(nr,nc)) moves.push([nr,nc]); break; }
+        moves.push([nr,nc]); nr+=drs[i]; nc+=dcs[i];
+      }
+    }
+  };
+
+  if (type === 'P') {
+    if (isEmpty(r+dir,c)) {
+      moves.push([r+dir,c]);
+      const startRow = color==='w'?6:1;
+      if (r===startRow && isEmpty(r+dir*2,c)) moves.push([r+dir*2,c]);
+    }
+    if (isEnemy(r+dir,c-1)) moves.push([r+dir,c-1]);
+    if (isEnemy(r+dir,c+1)) moves.push([r+dir,c+1]);
+  } else if (type === 'N') {
+    [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(([dr,dc])=>{
+      if (canGo(r+dr,c+dc)) moves.push([r+dr,c+dc]);
+    });
+  } else if (type === 'K') {
+    [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]].forEach(([dr,dc])=>{
+      if (canGo(r+dr,c+dc)) moves.push([r+dr,c+dc]);
+    });
+  } else if (type === 'R') {
+    slide([-1,1,0,0],[0,0,-1,1]);
+  } else if (type === 'B') {
+    slide([-1,-1,1,1],[-1,1,-1,1]);
+  } else if (type === 'Q') {
+    slide([-1,1,0,0,-1,-1,1,1],[0,0,-1,1,-1,1,-1,1]);
+  }
+  return moves;
+}
+
+function chessAIMove() {
+  if (gameState.isOver || gameState.myTurn) return;
+  const enemy = 'b';
+  let best = null, bestScore = -Infinity;
+
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      if (!gameState.board[r][c]?.startsWith(enemy)) continue;
+      const moves = getChessMoves(r, c);
+      for (const [tr, tc] of moves) {
+        const cap = gameState.board[tr][tc];
+        const score = cap ? { P:1, N:3, B:3, R:5, Q:9, K:100 }[cap[1]] || 0 : 0;
+        const rand = Math.random() * 0.5;
+        if (score + rand > bestScore) { bestScore = score + rand; best = {r,c,tr,tc}; }
+      }
+    }
+  }
+  if (best) {
+    applyChessMove(best.r, best.c, best.tr, best.tc, false);
+    if (!gameState.isOver) {
+      gameState.myTurn = true;
+      $('gameStatus').textContent = '내 차례 (흰색 ♙)';
+    }
+  }
+}
+
+// 멀티 체스 이동 수신
+socket.on('gameMove', ({ move }) => {
+  if (gameState.type === 'chess' && move.fr !== undefined) {
+    applyChessMove(move.fr, move.fc, move.tr, move.tc, false);
+    gameState.myTurn = true;
+    $('gameStatus').textContent = '내 차례';
+  } else if (gameState.type === 'gomoku') {
+    applyGomokuMove(move, false);
+  } else if (gameState.type === 'tictactoe') {
+    applyTTTMove(move.idx, false);
+  }
+});
+
+// =============================================
+// 우주 사격 게임
+// =============================================
+function initShooting() {
+  if (gameState.snakeTimer) clearInterval(gameState.snakeTimer);
+  const W = 380, H = 480;
+  const inner = $('gameBoardInner');
+  inner.style.cssText = 'display:flex;justify-content:center;padding:8px 0';
+  inner.innerHTML = '';
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  canvas.style.cssText = 'cursor:crosshair;max-width:100%;border-radius:8px;background:#0a0a2e';
+  inner.appendChild(canvas);
+  const ctx = canvas.getContext('2d');
+
+  let player = { x: W/2, y: H-50, w: 34, h: 28 };
+  let bullets = [], enemies = [], stars = [];
+  let score = 0, lives = 3, wave = 1, frame = 0, running = true;
+
+  // 별 배경
+  for (let i=0;i<60;i++) stars.push({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.5+.3,s:Math.random()*.5+.2});
+
+  function spawnEnemies() {
+    for (let c=0;c<Math.min(5+wave,8);c++)
+      enemies.push({x:60+c*(W-60)/7,y:30+Math.floor(Math.random()*3)*32,w:28,h:22,hp:wave,shootTimer:Math.random()*120+60,dir:1});
+  }
+  spawnEnemies();
+
+  // 조작
+  const keys = {};
+  const kd = e => { keys[e.key]=true; e.preventDefault(); };
+  const ku = e => keys[e.key]=false;
+  document.addEventListener('keydown', kd);
+  document.addEventListener('keyup',   ku);
+
+  canvas.addEventListener('click', () => {
+    if (running) bullets.push({x:player.x,y:player.y-14,vy:-8,isPlayer:true});
+  });
+  canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    player.x = Math.max(20, Math.min(W-20, (e.clientX-rect.left)*(W/rect.width)));
+  });
+
+  const tid = setInterval(() => {
+    if (!running) return;
+    frame++;
+
+    // 플레이어 이동 (키보드)
+    if (keys['ArrowLeft']||keys['a']) player.x = Math.max(20, player.x-4);
+    if (keys['ArrowRight']||keys['d']) player.x = Math.min(W-20, player.x+4);
+    if ((keys[' ']||keys['ArrowUp']) && frame%10===0) bullets.push({x:player.x,y:player.y-14,vy:-8,isPlayer:true});
+
+    // 적 이동 + 사격
+    let hitEdge = false;
+    enemies.forEach(e => {
+      e.x += e.dir * (1+wave*.2);
+      if (e.x>W-20||e.x<20) hitEdge = true;
+      e.shootTimer--;
+      if (e.shootTimer <= 0) {
+        bullets.push({x:e.x,y:e.y+12,vy:3+wave*.3,isPlayer:false});
+        e.shootTimer = 80 + Math.random()*60;
+      }
+    });
+    if (hitEdge) enemies.forEach(e => { e.dir*=-1; e.y+=16; });
+
+    // 총알 이동
+    bullets = bullets.filter(b => b.y>-10 && b.y<H+10);
+    bullets.forEach(b => b.y += b.vy);
+
+    // 충돌 검사
+    bullets.forEach((b,bi) => {
+      if (b.isPlayer) {
+        enemies.forEach((e,ei) => {
+          if (Math.abs(b.x-e.x)<16 && Math.abs(b.y-e.y)<14) {
+            e.hp--; bullets.splice(bi,1,{y:9999});
+            if (e.hp<=0) { enemies.splice(ei,1); score+=10+wave*2; }
+          }
+        });
+      } else {
+        if (Math.abs(b.x-player.x)<16 && Math.abs(b.y-player.y)<14) {
+          lives--; bullets.splice(bi,1,{y:9999});
+          if (lives<=0) { running=false; $('gameStatus').textContent=`💀 게임오버! 점수: ${score}`; }
+        }
+      }
+    });
+
+    if (enemies.length===0) { wave++; spawnEnemies(); }
+
+    // 그리기
+    ctx.fillStyle='#0a0a2e'; ctx.fillRect(0,0,W,H);
+    stars.forEach(s => { s.y+=s.s; if(s.y>H)s.y=0; ctx.fillStyle='rgba(255,255,255,.7)'; ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill(); });
+
+    // 플레이어 우주선
+    ctx.fillStyle='#00d4ff';
+    ctx.beginPath(); ctx.moveTo(player.x,player.y-14); ctx.lineTo(player.x+17,player.y+14); ctx.lineTo(player.x-17,player.y+14); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='rgba(0,212,255,.3)'; ctx.beginPath(); ctx.ellipse(player.x,player.y+4,18,8,0,0,Math.PI*2); ctx.fill();
+
+    // 적 우주선
+    enemies.forEach(e => {
+      ctx.fillStyle='#ff4466';
+      ctx.beginPath(); ctx.moveTo(e.x,e.y+12); ctx.lineTo(e.x+14,e.y-10); ctx.lineTo(e.x-14,e.y-10); ctx.closePath(); ctx.fill();
+    });
+
+    // 총알
+    bullets.forEach(b => {
+      ctx.fillStyle = b.isPlayer ? '#ffe66d' : '#ff6b6b';
+      ctx.fillRect(b.x-2, b.y-5, 4, 10);
+    });
+
+    // HUD
+    ctx.fillStyle='#fff'; ctx.font='bold 14px sans-serif';
+    ctx.fillText(`점수: ${score}`, 10, 22);
+    ctx.fillText(`목숨: ${'❤️'.repeat(lives)}`, 10, 42);
+    ctx.fillText(`웨이브: ${wave}`, W-90, 22);
+  }, 1000/60);
+
+  gameState.snakeTimer = tid;
+  gameState._shootCleanup = () => { document.removeEventListener('keydown',kd); document.removeEventListener('keyup',ku); };
+  $('gameStatus').textContent = '마우스로 이동 · 클릭/스페이스로 사격!';
+}
+
+// =============================================
+// 양궁 게임
+// =============================================
+function initArchery() {
+  if (gameState.snakeTimer) clearInterval(gameState.snakeTimer);
+  const W = 380, H = 360;
+  const inner = $('gameBoardInner');
+  inner.style.cssText = 'display:flex;justify-content:center;padding:8px 0';
+  inner.innerHTML = '';
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  canvas.style.cssText = 'max-width:100%;border-radius:8px;background:#1a3a1a;cursor:pointer';
+  inner.appendChild(canvas);
+  const ctx = canvas.getContext('2d');
+
+  let score = 0, arrows = 5, phase = 'aim'; // aim → release → result
+  let windAngle = 0, windSpeed = 0;
+  let aimAngle = Math.PI/2; // 90° = 직선
+  let power = 0, powerDir = 1;
+  let arrow = null, frameId;
+
+  function newRound() {
+    windAngle = (Math.random() - 0.5) * 0.6;
+    windSpeed = Math.random() * 2 + 0.5;
+    power = 0; powerDir = 1; phase = 'aim'; arrow = null;
+  }
+  newRound();
+
+  // 과녁 중심
+  const TX = W/2, TY = 100;
+  const RINGS = [50,40,30,20,10]; // 점수
+
+  function drawTarget() {
+    const colors = ['#fff','#000','#00a','#f00','#ff0'];
+    [60,46,32,18,8].forEach((r,i) => {
+      ctx.fillStyle = colors[i];
+      ctx.beginPath(); ctx.arc(TX, TY, r, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.stroke();
+    });
+    ctx.fillStyle = '#ff0'; ctx.beginPath(); ctx.arc(TX, TY, 3, 0, Math.PI*2); ctx.fill();
+  }
+
+  function drawScene() {
+    // 배경
+    ctx.fillStyle = '#1a3a1a'; ctx.fillRect(0, 0, W, H);
+    // 잔디
+    ctx.fillStyle = '#2d5a2d'; ctx.fillRect(0, H-60, W, 60);
+    // 과녁대
+    ctx.fillStyle = '#8B4513'; ctx.fillRect(TX-6, TY+60, 12, H-120-TY);
+    drawTarget();
+
+    // 바람 표시
+    ctx.save();
+    ctx.translate(60, 30);
+    ctx.strokeStyle = '#88ccff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0,0);
+    ctx.lineTo(Math.cos(windAngle)*windSpeed*20, Math.sin(windAngle)*windSpeed*20);
+    ctx.stroke();
+    ctx.fillStyle='#88ccff'; ctx.font='12px sans-serif';
+    ctx.fillText(`💨 ${windSpeed.toFixed(1)}`, 30, 5);
+    ctx.restore();
+
+    // 조준각 표시 (aim phase)
+    if (phase === 'aim') {
+      const AX = W/2, AY = H-30;
+      ctx.save();
+      ctx.translate(AX, AY);
+      // 파워 게이지
+      ctx.fillStyle = '#333'; ctx.fillRect(-40, -8, 80, 6);
+      ctx.fillStyle = `hsl(${120-power*1.2},80%,50%)`;
+      ctx.fillRect(-40, -8, power*0.8, 6);
+      ctx.fillStyle = '#aaa'; ctx.font='11px sans-serif'; ctx.fillText('파워', -60, -2);
+
+      // 조준선
+      const len = 80;
+      ctx.strokeStyle = 'rgba(255,200,0,.7)'; ctx.lineWidth = 2;
+      ctx.setLineDash([6,4]);
+      ctx.beginPath(); ctx.moveTo(0,0);
+      ctx.lineTo(-Math.cos(aimAngle)*len, -Math.sin(aimAngle)*len);
+      ctx.stroke(); ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    // 화살
+    if (arrow) {
+      ctx.save();
+      ctx.translate(arrow.x, arrow.y);
+      ctx.rotate(Math.atan2(arrow.vy, arrow.vx));
+      ctx.fillStyle = '#8B4513'; ctx.fillRect(-20, -1.5, 24, 3);
+      ctx.fillStyle = '#aaa'; ctx.beginPath(); ctx.moveTo(4,0); ctx.lineTo(-4,-5); ctx.lineTo(-4,5); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    // HUD
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(`점수: ${score}`, 10, 22);
+    ctx.fillText(`화살: ${'🏹'.repeat(Math.max(0,arrows))}`, 10, 42);
+    if (phase === 'aim') {
+      ctx.fillStyle = '#ffe'; ctx.font = '12px sans-serif';
+      ctx.fillText('클릭 또는 스페이스로 발사!', W/2-70, H-8);
+    }
+  }
+
+  function shoot() {
+    if (phase !== 'aim' || arrows <= 0) return;
+    arrows--;
+    const AX = W/2, AY = H-30;
+    const spd = 8 + power * 0.08;
+    arrow = {
+      x: AX, y: AY,
+      vx: -Math.cos(aimAngle)*spd,
+      vy: -Math.sin(aimAngle)*spd
+    };
+    phase = 'release';
+  }
+
+  canvas.addEventListener('click', shoot);
+  document.addEventListener('keydown', function sh(e){ if(e.key===' '){shoot();e.preventDefault();} if(e.key==='Escape'||e.key==='q'){clearInterval(gameState.snakeTimer);cancelAnimationFrame(frameId);document.removeEventListener('keydown',sh);} });
+
+  let t = 0;
+  const tid = setInterval(() => {
+    t++;
+    // 조준 흔들림
+    if (phase === 'aim') {
+      aimAngle = Math.PI/2 + Math.sin(t*0.03)*0.4;
+      power += powerDir * 1.5;
+      if (power >= 100 || power <= 0) powerDir *= -1;
+    }
+
+    // 화살 비행
+    if (phase === 'release' && arrow) {
+      arrow.x += arrow.vx + Math.cos(windAngle)*windSpeed*0.15;
+      arrow.y += arrow.vy;
+      arrow.vy += 0.2; // 중력
+
+      // 과녁 명중 확인
+      const dx = arrow.x - TX, dy = arrow.y - TY;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < 62) {
+        // 점수 계산
+        const pts = dist < 8 ? 10 : dist < 18 ? 8 : dist < 32 ? 6 : dist < 46 ? 4 : 2;
+        score += pts;
+        $('gameStatus').textContent = `${pts === 10 ? '🎯 퍼펙트!' : pts >= 6 ? '👍 굿샷!' : '화살 적중!'} +${pts}점`;
+        phase = 'hit';
+        setTimeout(() => { if (arrows > 0) newRound(); else { clearInterval(gameState.snakeTimer); $('gameStatus').textContent = `🏆 최종 점수: ${score}점`; } }, 1500);
+      }
+
+      // 땅/화면 이탈
+      if (arrow.y > H || arrow.x < 0 || arrow.x > W) {
+        $('gameStatus').textContent = `빗나갔습니다! 남은 화살: ${arrows}개`;
+        phase = arrows > 0 ? 'miss' : 'over';
+        setTimeout(() => { if (arrows > 0) newRound(); else { clearInterval(gameState.snakeTimer); $('gameStatus').textContent = `🏆 최종 점수: ${score}점`; } }, 1200);
+      }
+    }
+    drawScene();
+  }, 1000/60);
+
+  gameState.snakeTimer = tid;
+  $('gameStatus').textContent = '클릭으로 발사! 타이밍에 맞춰 쏘세요!';
+}
+
+// =============================================
+// 블록 코딩 시스템
+// =============================================
+
+const BC_CATS = [
+  { id:'event',    label:'이벤트',  color:'#f59e0b', blocks:[
+    { type:'event_start',   label:'🚀 시작하면',               params:[] },
+    { type:'event_keydown', label:'⌨️ [key] 키를 눌렀을 때', params:[{name:'key',type:'keysel',default:'오른쪽'}] },
+  ]},
+  { id:'motion',   label:'이동',    color:'#3b82f6', blocks:[
+    { type:'motion_x',      label:'➡️ X를 [n] 만큼 바꾸기',    params:[{name:'n',type:'num',default:'10'}] },
+    { type:'motion_y',      label:'⬆️ Y를 [n] 만큼 바꾸기',    params:[{name:'n',type:'num',default:'10'}] },
+    { type:'motion_setx',   label:'📍 X 위치를 [x] 로 정하기', params:[{name:'x',type:'num',default:'160'}] },
+    { type:'motion_sety',   label:'📍 Y 위치를 [y] 로 정하기', params:[{name:'y',type:'num',default:'120'}] },
+    { type:'motion_bounce', label:'🔄 벽에서 튕기기',           params:[] },
+    { type:'motion_velx',   label:'💨 가로 속도를 [vx] 로',    params:[{name:'vx',type:'num',default:'2'}] },
+    { type:'motion_vely',   label:'💨 세로 속도를 [vy] 로',    params:[{name:'vy',type:'num',default:'2'}] },
+    { type:'motion_applyvel',label:'▶️ 속도 적용하기',          params:[] },
+  ]},
+  { id:'looks',    label:'생김새',  color:'#8b5cf6', blocks:[
+    { type:'looks_color',  label:'🎨 색을 [color] 로 바꾸기',   params:[{name:'color',type:'color',default:'#ff0000'}] },
+    { type:'looks_size',   label:'📏 크기를 [size] 로 정하기',  params:[{name:'size',type:'num',default:'40'}] },
+    { type:'looks_show',   label:'👁 보이기',                   params:[] },
+    { type:'looks_hide',   label:'🙈 숨기기',                   params:[] },
+    { type:'looks_label',  label:'🏷 텍스트를 [text] 로 정하기',params:[{name:'text',type:'text',default:'안녕!'}] },
+  ]},
+  { id:'control',  label:'제어',    color:'#f97316', blocks:[
+    { type:'control_forever',label:'♾ 계속 반복하기',           params:[],                                     hasChildren:true },
+    { type:'control_repeat', label:'🔢 [n] 번 반복하기',         params:[{name:'n',type:'num',default:'10'}],  hasChildren:true },
+    { type:'control_wait',   label:'⏰ [n] 초 기다리기',         params:[{name:'n',type:'num',default:'1'}] },
+    { type:'control_if',     label:'❓ 만약 [cond] 이라면',      params:[{name:'cond',type:'cond',default:'right_key'}], hasChildren:true },
+  ]},
+  { id:'sense',    label:'감지',    color:'#06b6d4', blocks:[
+    { type:'sense_key',  label:'🎮 [key] 키가 눌렸는지',         params:[{name:'key',type:'keysel',default:'오른쪽'}] },
+    { type:'sense_edge', label:'🟦 화면 끝에 닿았는지',          params:[] },
+  ]},
+  { id:'sound',    label:'소리',    color:'#10b981', blocks:[
+    { type:'sound_beep', label:'🔊 삑 소리 내기',                params:[] },
+  ]},
+  { id:'variable', label:'변수',    color:'#ef4444', blocks:[
+    { type:'var_set',    label:'📊 변수 [name] 을 [val] 로',     params:[{name:'name',type:'text',default:'점수'},{name:'val',type:'num',default:'0'}] },
+    { type:'var_change', label:'📈 변수 [name] 을 [n] 만큼',     params:[{name:'name',type:'text',default:'점수'},{name:'n',type:'num',default:'1'}] },
+    { type:'var_show',   label:'👁 변수 [name] 보이기',          params:[{name:'name',type:'text',default:'점수'}] },
+  ]},
+];
+
+const KEY_MAP = { '오른쪽':'ArrowRight','왼쪽':'ArrowLeft','위':'ArrowUp','아래':'ArrowDown','스페이스':' ','A':'a','S':'s','D':'d','W':'w' };
+const COND_MAP = { right_key:'오른쪽 키',left_key:'왼쪽 키',up_key:'위 키',down_key:'아래 키',space_key:'스페이스',edge:'벽에 닿음' };
+
+let bcScript = [];
+let bcSprite  = { x:160, y:120, w:40, h:40, color:'#3b82f6', shape:'rect', visible:true, velX:0, velY:0, label:'' };
+let bcBgColor = '#87ceeb';
+let bcRuntime = null;
+let bcVars = {}, bcShownVars = new Set();
+let _bcIdCounter = 0;
+const bcId = () => 'blk' + (++_bcIdCounter);
+
+function bcInitPalette() {
+  const el = $('bcPalette');
+  if (!el) return;
+  el.innerHTML = BC_CATS.map(cat => `
+    <div>
+      <div class="bc-cat-header" onclick="bcToggleCat('${cat.id}')">
+        <div class="bc-cat-dot" style="background:${cat.color}"></div>
+        <span>${cat.label}</span>
+        <i class="fa-solid fa-chevron-right" id="bcCatArrow-${cat.id}" style="font-size:10px;margin-left:auto;color:var(--text-3);transition:transform .2s"></i>
+      </div>
+      <div class="bc-cat-blocks" id="bcCat-${cat.id}">
+        ${cat.blocks.map(b => `<button class="bc-block-item" onclick="bcAddBlock('${b.type}')">
+          <span class="bc-block-pill" style="background:${cat.color}">${b.label.replace(/\[[^\]]+\]/g,'(값)')}</span>
+        </button>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function bcToggleCat(id) {
+  const el = $('bcCat-'+id), arrow = $('bcCatArrow-'+id);
+  el.classList.toggle('open');
+  if (arrow) arrow.style.transform = el.classList.contains('open') ? 'rotate(90deg)' : '';
+}
+
+function bcAddBlock(type, parentId) {
+  const cat = BC_CATS.find(c => c.blocks.some(b => b.type===type));
+  const def = cat?.blocks.find(b => b.type===type);
+  if (!def) return;
+  const params = {};
+  def.params.forEach(p => params[p.name] = p.default);
+  const block = { id:bcId(), type, params, children: def.hasChildren ? [] : undefined };
+  if (parentId) {
+    const parent = bcFindBlock(bcScript, parentId);
+    if (parent?.children) parent.children.push(block);
+  } else {
+    bcScript.push(block);
+  }
+  bcRenderScript();
+}
+
+function bcFindBlock(blocks, id) {
+  for (const b of blocks) {
+    if (b.id===id) return b;
+    if (b.children) { const f = bcFindBlock(b.children, id); if (f) return f; }
+  }
+  return null;
+}
+
+function bcDeleteBlock(id) {
+  function remove(arr) {
+    const i = arr.findIndex(b => b.id===id);
+    if (i!==-1) { arr.splice(i,1); return true; }
+    for (const b of arr) if (b.children && remove(b.children)) return true;
+    return false;
+  }
+  remove(bcScript); bcRenderScript();
+}
+
+function bcMoveBlock(id, dir) {
+  function move(arr) {
+    const i = arr.findIndex(b => b.id===id);
+    if (i!==-1) { const j=i+dir; if(j>=0&&j<arr.length){[arr[i],arr[j]]=[arr[j],arr[i]];return true;} return false; }
+    for (const b of arr) if (b.children && move(b.children)) return true;
+    return false;
+  }
+  move(bcScript); bcRenderScript();
+}
+
+function bcClearScript() {
+  if (!confirm('스크립트를 모두 초기화할까요?')) return;
+  bcScript = []; bcRenderScript();
+}
+
+function bcRenderScript() {
+  const area = $('bcScriptArea');
+  if (!area) return;
+  if (bcScript.length===0) { area.innerHTML='<div class="bc-empty-hint">← 왼쪽에서 블록을 클릭해 추가하세요</div>'; return; }
+  area.innerHTML = '';
+  bcScript.forEach(b => area.appendChild(bcRenderBlock(b, true)));
+  if (!bcRuntime) bcDrawPreview();
+}
+
+function bcRenderBlock(block, isTop) {
+  const cat = BC_CATS.find(c => c.blocks.some(b => b.type===block.type));
+  const def  = cat?.blocks.find(b => b.type===block.type);
+  if (!def) return document.createTextNode('');
+  const color = cat.color;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'bc-script-block';
+  wrap.style.borderColor = color+'44';
+
+  const header = document.createElement('div');
+  header.className = 'bc-script-block-header';
+  header.style.background = color;
+
+  const labelEl = document.createElement('div');
+  labelEl.className = 'bc-script-block-label';
+
+  def.label.split(/(\[[^\]]+\])/).forEach(part => {
+    const match = part.match(/^\[(\w+)\]$/);
+    if (match) {
+      const pname = match[1];
+      const pDef  = def.params.find(p => p.name===pname);
+      if (!pDef) return;
+      if (pDef.type==='color') {
+        const inp = document.createElement('input');
+        inp.type='color'; inp.value=block.params[pname]||pDef.default;
+        inp.style.cssText='width:28px;height:22px;border:none;background:transparent;cursor:pointer;border-radius:3px;padding:0';
+        inp.addEventListener('change', e => { block.params[pname]=e.target.value; bcDrawPreview(); });
+        labelEl.appendChild(inp);
+      } else if (pDef.type==='keysel'||pDef.type==='cond') {
+        const opts = pDef.type==='keysel' ? ['오른쪽','왼쪽','위','아래','스페이스','A','S','D','W'] : Object.keys(COND_MAP);
+        const sel = document.createElement('select');
+        sel.style.cssText='background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.4);color:#fff;font-size:11px;border-radius:4px;padding:1px 3px';
+        opts.forEach(k => {
+          const o=document.createElement('option'); o.value=k;
+          o.textContent = pDef.type==='cond' ? COND_MAP[k]||k : k;
+          if((block.params[pname]||pDef.default)===k) o.selected=true;
+          sel.appendChild(o);
+        });
+        sel.addEventListener('change', e => block.params[pname]=e.target.value);
+        labelEl.appendChild(sel);
+      } else {
+        const inp = document.createElement('input');
+        inp.className='bc-script-param';
+        inp.value=block.params[pname]!==undefined ? block.params[pname] : (pDef.default||'');
+        inp.style.cssText='width:42px;min-width:28px;';
+        inp.addEventListener('input', e => { block.params[pname]=e.target.value; bcDrawPreview(); });
+        labelEl.appendChild(inp);
+      }
+    } else if (part) {
+      const s=document.createElement('span'); s.textContent=part; labelEl.appendChild(s);
+    }
+  });
+
+  header.appendChild(labelEl);
+  const btns = document.createElement('div');
+  btns.className='bc-script-block-btns';
+  if (isTop) {
+    ['▲','▼'].forEach((t,i) => {
+      const b=document.createElement('button'); b.className='bc-script-block-btn'; b.textContent=t;
+      b.onclick=()=>bcMoveBlock(block.id, i===0?-1:1); btns.appendChild(b);
+    });
+  }
+  const del=document.createElement('button'); del.className='bc-script-block-btn'; del.textContent='✕';
+  del.onclick=()=>bcDeleteBlock(block.id); btns.appendChild(del);
+  header.appendChild(btns);
+  wrap.appendChild(header);
+
+  if (block.children!==undefined) {
+    const childArea=document.createElement('div');
+    childArea.className='bc-children'; childArea.style.borderLeftColor=color+'66';
+    block.children.forEach(ch => childArea.appendChild(bcRenderBlock(ch, false)));
+
+    const addSel=document.createElement('select');
+    addSel.style.cssText='font-size:10px;background:rgba(0,0,0,.05);border:1px dashed var(--border);border-radius:4px;margin:2px 0 4px;padding:2px 4px;width:100%';
+    const ph=document.createElement('option'); ph.value=''; ph.textContent='+ 블록 추가...'; addSel.appendChild(ph);
+    BC_CATS.forEach(cat => {
+      const grp=document.createElement('optgroup'); grp.label=cat.label;
+      cat.blocks.filter(b=>!b.type.startsWith('event_')).forEach(b=>{
+        const o=document.createElement('option'); o.value=b.type;
+        o.textContent=b.label.replace(/\[[^\]]+\]/g,'(값)'); grp.appendChild(o);
+      }); addSel.appendChild(grp);
+    });
+    addSel.addEventListener('change', e => { if(e.target.value){bcAddBlock(e.target.value,block.id);e.target.value='';} });
+    childArea.appendChild(addSel);
+
+    const endLabel=document.createElement('div');
+    endLabel.className='bc-block-end'; endLabel.style.background=color+'88'; endLabel.textContent='끝';
+    wrap.appendChild(childArea); wrap.appendChild(endLabel);
+  }
+  return wrap;
+}
+
+function bcUpdateSprite() {
+  bcSprite.color = $('bcSpriteColor')?.value||'#3b82f6';
+  bcSprite.shape = $('bcSpriteShape')?.value||'rect';
+  bcSprite.w=bcSprite.h=parseInt($('bcSpriteSize')?.value||40);
+  bcSprite.label = $('bcSpriteLabel')?.value||'';
+  bcBgColor = $('bcBgColor')?.value||'#87ceeb';
+  bcDrawPreview();
+}
+
+function bcDrawPreview() {
+  const canvas=$('bcCanvas'); if(!canvas) return;
+  const ctx=canvas.getContext('2d');
+  ctx.fillStyle=bcBgColor; ctx.fillRect(0,0,canvas.width,canvas.height);
+  if (!bcSprite.visible) return;
+  ctx.fillStyle=bcSprite.color;
+  const {x,y,w,h,shape}=bcSprite;
+  if(shape==='circle'){ctx.beginPath();ctx.arc(x,y,w/2,0,Math.PI*2);ctx.fill();}
+  else if(shape==='triangle'){ctx.beginPath();ctx.moveTo(x,y-h/2);ctx.lineTo(x+w/2,y+h/2);ctx.lineTo(x-w/2,y+h/2);ctx.closePath();ctx.fill();}
+  else{ctx.fillRect(x-w/2,y-h/2,w,h);}
+  if(bcSprite.label){ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.textAlign='center';ctx.fillText(bcSprite.label,x,y+4);}
+  let varY=14;
+  bcShownVars.forEach(name=>{
+    ctx.fillStyle='rgba(0,0,0,.65)';ctx.fillRect(4,varY-11,100,16);
+    ctx.fillStyle='#fff';ctx.font='11px sans-serif';ctx.textAlign='left';
+    ctx.fillText(`${name}: ${bcVars[name]??0}`,8,varY);varY+=19;
+  });
+}
+
+function bcRun() {
+  if (bcRuntime) bcStop();
+  bcVars={}; bcShownVars=new Set();
+  bcSprite.x=160;bcSprite.y=120;bcSprite.velX=0;bcSprite.velY=0;bcSprite.visible=true;
+  const canvas=$('bcCanvas'), W=canvas?canvas.width:320, H=canvas?canvas.height:240;
+  const keyState={};
+  const onKD=e=>keyState[e.key]=true, onKU=e=>keyState[e.key]=false;
+  document.addEventListener('keydown',onKD); document.addEventListener('keyup',onKU);
+  let running=true;
+
+  function evalCond(cond){
+    const m={right_key:'ArrowRight',left_key:'ArrowLeft',up_key:'ArrowUp',down_key:'ArrowDown',space_key:' '};
+    if(cond==='edge'){const sp=bcSprite;return sp.x<=sp.w/2||sp.x>=W-sp.w/2||sp.y<=sp.h/2||sp.y>=H-sp.h/2;}
+    return !!(keyState[m[cond]]||keyState[KEY_MAP[cond]]||keyState[cond]);
+  }
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+  async function exec(blocks){
+    for(const b of blocks){
+      if(!running) return;
+      const p=b.params,sp=bcSprite;
+      switch(b.type){
+        case 'motion_x': sp.x=Math.max(sp.w/2,Math.min(W-sp.w/2,sp.x+(parseFloat(p.n)||0))); break;
+        case 'motion_y': sp.y=Math.max(sp.h/2,Math.min(H-sp.h/2,sp.y+(parseFloat(p.n)||0))); break;
+        case 'motion_setx': sp.x=parseFloat(p.x)||0; break;
+        case 'motion_sety': sp.y=parseFloat(p.y)||0; break;
+        case 'motion_bounce':
+          if(sp.x-sp.w/2<=0||sp.x+sp.w/2>=W)sp.velX=-sp.velX;
+          if(sp.y-sp.h/2<=0||sp.y+sp.h/2>=H)sp.velY=-sp.velY; break;
+        case 'motion_velx': sp.velX=parseFloat(p.vx)||0; break;
+        case 'motion_vely': sp.velY=parseFloat(p.vy)||0; break;
+        case 'motion_applyvel':
+          sp.x=Math.max(sp.w/2,Math.min(W-sp.w/2,sp.x+sp.velX));
+          sp.y=Math.max(sp.h/2,Math.min(H-sp.h/2,sp.y+sp.velY)); break;
+        case 'looks_color': sp.color=p.color; break;
+        case 'looks_size': sp.w=sp.h=Math.max(5,parseFloat(p.size)||40); break;
+        case 'looks_show': sp.visible=true; break;
+        case 'looks_hide': sp.visible=false; break;
+        case 'looks_label': sp.label=p.text||''; break;
+        case 'control_wait': await sleep((parseFloat(p.n)||1)*1000); break;
+        case 'control_repeat': for(let i=0;i<(parseInt(p.n)||10)&&running;i++){await exec(b.children||[]);await sleep(16);} break;
+        case 'control_forever': while(running){await exec(b.children||[]);await sleep(16);} break;
+        case 'control_if': if(evalCond(p.cond))await exec(b.children||[]); break;
+        case 'var_set': bcVars[p.name||'변수']=parseFloat(p.val)||0; break;
+        case 'var_change': bcVars[p.name||'변수']=(bcVars[p.name||'변수']||0)+(parseFloat(p.n)||0); break;
+        case 'var_show': bcShownVars.add(p.name||'변수'); break;
+        case 'sound_beep': try{const ac=new AudioContext();const o=ac.createOscillator();o.connect(ac.destination);o.start();o.stop(ac.currentTime+.1);}catch{} break;
+        case 'event_start': await exec(b.children||[]); break;
+      }
+    }
+  }
+
+  let rafId;
+  function loop(){if(!running)return;bcDrawPreview();rafId=requestAnimationFrame(loop);}
+  loop();
+  bcScript.filter(b=>b.type==='event_start').forEach(b=>exec(b.children||[]));
+  const kbBlocks=bcScript.filter(b=>b.type==='event_keydown');
+  const kbTrigger=e=>kbBlocks.forEach(b=>{const k=KEY_MAP[b.params.key||'오른쪽']||b.params.key;if(e.key===k)exec(b.children||[]);});
+  document.addEventListener('keydown',kbTrigger);
+
+  bcRuntime={stop:()=>{running=false;cancelAnimationFrame(rafId);document.removeEventListener('keydown',onKD);document.removeEventListener('keyup',onKU);document.removeEventListener('keydown',kbTrigger);}};
+  if($('bcRunBtn'))$('bcRunBtn').style.display='none';
+  if($('bcStopBtn'))$('bcStopBtn').style.display='';
+}
+
+function bcStop(){
+  if(bcRuntime){bcRuntime.stop();bcRuntime=null;}
+  if($('bcRunBtn'))$('bcRunBtn').style.display='';
+  if($('bcStopBtn'))$('bcStopBtn').style.display='none';
+  bcDrawPreview();
+}
+
+async function bcSubmit(){
+  const title=$('bcGameTitle')?.value?.trim();
+  if(!title){showToast('게임 제목을 입력해주세요!','error');return;}
+  if(bcScript.length===0){showToast('블록을 추가해주세요!','error');return;}
+  bcStop();
+  const program={script:bcScript,sprite:bcSprite,bgColor:bcBgColor};
+  try{
+    const res=await fetch('/api/block-games',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:USER.id,nickname:USER.nickname,title,program})});
+    const data=await res.json();
+    if(data.success){showToast('제출 완료! 관리자 승인을 기다리세요 🎉','success');$('bcGameTitle').value='';}
+    else showToast(data.error||'제출 실패','error');
+  }catch{showToast('제출 중 오류 발생','error');}
+}
+
+// switchView 확장
+const _origSwitch=switchView;
+function switchView(viewName){
+  _origSwitch(viewName);
+  if(viewName==='blockcode'){bcInitPalette();bcRenderScript();bcDrawPreview();}
+  if(viewName==='games') loadUserGames();
+}
+
+// ---- 유저 게임 목록 ----
+async function loadUserGames(){
+  const el=$('userGamesList'); if(!el) return;
+  try{
+    const res=await fetch('/api/block-games');
+    const games=await res.json();
+    if(games.length===0){el.innerHTML='<div style="text-align:center;padding:16px;color:var(--text-3);font-size:13px">아직 승인된 게임이 없습니다.<br>블록코딩으로 게임을 만들어 제출해보세요!</div>';return;}
+    el.innerHTML=games.map(g=>`
+      <div class="user-game-item" onclick="openUserGame('${g.id}')">
+        <div class="user-game-thumb">🎮</div>
+        <div class="user-game-info">
+          <div class="user-game-title">${escHtml(g.title)}</div>
+          <div class="user-game-meta">by ${escHtml(g.nickname)} · 플레이 ${g.playCount||0}회</div>
+        </div>
+        <i class="fa-solid fa-play-circle" style="color:var(--accent);font-size:20px"></i>
+      </div>`).join('');
+  }catch{el.innerHTML='<div style="padding:12px;color:var(--text-3)">불러오기 실패</div>';}
+}
+
+let userGameRuntime=null;
+
+async function openUserGame(gameId){
+  try{
+    const res=await fetch(`/api/block-games/${gameId}`);
+    const game=await res.json();
+    $('userGameTitle').textContent=game.title;
+    $('userGameMeta').textContent=`by ${game.nickname}`;
+    $('userGameModal').classList.remove('hidden');
+    fetch(`/api/block-games/${gameId}/play`,{method:'POST'});
+    window._ugProgram=game.program;
+    const canvas=$('userGameCanvas'),ctx=canvas.getContext('2d');
+    ctx.fillStyle=game.program.bgColor||'#87ceeb';ctx.fillRect(0,0,canvas.width,canvas.height);
+  }catch{showToast('게임을 불러오지 못했습니다.','error');}
+}
+
+function closeUserGame(){userGameStop();$('userGameModal').classList.add('hidden');window._ugProgram=null;}
+
+function userGameRun(){
+  userGameStop();
+  const prog=window._ugProgram; if(!prog) return;
+  const canvas=$('userGameCanvas'),W=canvas.width,H=canvas.height;
+  const sprite={...prog.sprite,velX:0,velY:0,visible:true};
+  const script=prog.script||[],bgColor=prog.bgColor||'#87ceeb';
+  let vars={},shownVars=new Set(),running=true;
+  const keyState={};
+  const onKD=e=>keyState[e.key]=true,onKU=e=>keyState[e.key]=false;
+  document.addEventListener('keydown',onKD);document.addEventListener('keyup',onKU);
+
+  function evalCond(c){
+    const m={right_key:'ArrowRight',left_key:'ArrowLeft',up_key:'ArrowUp',down_key:'ArrowDown',space_key:' '};
+    if(c==='edge')return sprite.x<=sprite.w/2||sprite.x>=W-sprite.w/2||sprite.y<=sprite.h/2||sprite.y>=H-sprite.h/2;
+    return !!(keyState[m[c]]||keyState[KEY_MAP[c]]||keyState[c]);
+  }
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  async function exec(blocks){
+    for(const b of blocks){
+      if(!running)return;
+      const p=b.params,sp=sprite;
+      switch(b.type){
+        case 'motion_x': sp.x=Math.max(sp.w/2,Math.min(W-sp.w/2,sp.x+(parseFloat(p.n)||0)));break;
+        case 'motion_y': sp.y=Math.max(sp.h/2,Math.min(H-sp.h/2,sp.y+(parseFloat(p.n)||0)));break;
+        case 'motion_setx': sp.x=parseFloat(p.x)||0;break;
+        case 'motion_sety': sp.y=parseFloat(p.y)||0;break;
+        case 'motion_bounce':
+          if(sp.x-sp.w/2<=0||sp.x+sp.w/2>=W)sp.velX=-sp.velX;
+          if(sp.y-sp.h/2<=0||sp.y+sp.h/2>=H)sp.velY=-sp.velY;break;
+        case 'motion_velx': sp.velX=parseFloat(p.vx)||0;break;
+        case 'motion_vely': sp.velY=parseFloat(p.vy)||0;break;
+        case 'motion_applyvel':
+          sp.x=Math.max(sp.w/2,Math.min(W-sp.w/2,sp.x+sp.velX));
+          sp.y=Math.max(sp.h/2,Math.min(H-sp.h/2,sp.y+sp.velY));break;
+        case 'looks_color': sp.color=p.color;break;
+        case 'looks_size': sp.w=sp.h=Math.max(5,parseFloat(p.size)||40);break;
+        case 'looks_show': sp.visible=true;break;
+        case 'looks_hide': sp.visible=false;break;
+        case 'looks_label': sp.label=p.text||'';break;
+        case 'control_wait': await sleep((parseFloat(p.n)||1)*1000);break;
+        case 'control_repeat': for(let i=0;i<(parseInt(p.n)||10)&&running;i++){await exec(b.children||[]);await sleep(16);}break;
+        case 'control_forever': while(running){await exec(b.children||[]);await sleep(16);}break;
+        case 'control_if': if(evalCond(p.cond))await exec(b.children||[]);break;
+        case 'var_set': vars[p.name||'변수']=parseFloat(p.val)||0;break;
+        case 'var_change': vars[p.name||'변수']=(vars[p.name||'변수']||0)+(parseFloat(p.n)||0);break;
+        case 'var_show': shownVars.add(p.name||'변수');break;
+        case 'event_start': await exec(b.children||[]);break;
+      }
+    }
+  }
+
+  function draw(){
+    if(!running)return;
+    const ctx=canvas.getContext('2d');
+    ctx.fillStyle=bgColor;ctx.fillRect(0,0,W,H);
+    if(sprite.visible){
+      ctx.fillStyle=sprite.color;
+      if(sprite.shape==='circle'){ctx.beginPath();ctx.arc(sprite.x,sprite.y,sprite.w/2,0,Math.PI*2);ctx.fill();}
+      else if(sprite.shape==='triangle'){ctx.beginPath();ctx.moveTo(sprite.x,sprite.y-sprite.h/2);ctx.lineTo(sprite.x+sprite.w/2,sprite.y+sprite.h/2);ctx.lineTo(sprite.x-sprite.w/2,sprite.y+sprite.h/2);ctx.closePath();ctx.fill();}
+      else{ctx.fillRect(sprite.x-sprite.w/2,sprite.y-sprite.h/2,sprite.w,sprite.h);}
+      if(sprite.label){ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.textAlign='center';ctx.fillText(sprite.label,sprite.x,sprite.y+4);}
+    }
+    let vy=14;
+    shownVars.forEach(name=>{ctx.fillStyle='rgba(0,0,0,.65)';ctx.fillRect(4,vy-11,100,16);ctx.fillStyle='#fff';ctx.font='11px sans-serif';ctx.textAlign='left';ctx.fillText(`${name}: ${vars[name]??0}`,8,vy);vy+=19;});
+    requestAnimationFrame(draw);
+  }
+  draw();
+  script.filter(b=>b.type==='event_start').forEach(b=>exec(b.children||[]));
+  const kbBlocks=script.filter(b=>b.type==='event_keydown');
+  const kbTrigger=e=>kbBlocks.forEach(b=>{const k=KEY_MAP[b.params.key||'오른쪽']||b.params.key;if(e.key===k)exec(b.children||[]);});
+  document.addEventListener('keydown',kbTrigger);
+  userGameRuntime={stop:()=>{running=false;document.removeEventListener('keydown',onKD);document.removeEventListener('keyup',onKU);document.removeEventListener('keydown',kbTrigger);}};
+  $('userGameRunBtn').style.display='none';
+  $('userGameStopBtn').style.display='';
+}
+
+function userGameStop(){
+  if(userGameRuntime){userGameRuntime.stop();userGameRuntime=null;}
+  $('userGameRunBtn').style.display='';
+  $('userGameStopBtn').style.display='none';
+}
+
+// ---- 관리자 게임 심사 ----
+async function loadPendingGames(){
+  const el=$('pendingGamesList'); if(!el) return;
+  el.innerHTML='<div style="font-size:12px;color:var(--text-3)">불러오는 중...</div>';
+  try{
+    const res=await fetch(`/api/block-games/pending?password=${encodeURIComponent(state.adminPw)}`);
+    const games=await res.json();
+    if(games.length===0){el.innerHTML='<div style="font-size:12px;color:var(--text-3)">심사 대기 중인 게임이 없습니다.</div>';return;}
+    el.innerHTML=games.map(g=>`
+      <div class="pending-game-card">
+        <div class="pending-game-title">${escHtml(g.title)}</div>
+        <div class="pending-game-meta">by ${escHtml(g.nickname)} · ${formatTime(g.createdAt)}</div>
+        <div class="pending-game-actions">
+          <button class="btn btn-primary btn-sm" onclick="adminApproveGame('${g.id}')">✅ 승인</button>
+          <button class="btn btn-danger btn-sm" onclick="adminRejectGame('${g.id}')">❌ 거절</button>
+          <button class="btn btn-ghost btn-sm" onclick="openUserGame('${g.id}')">👁 미리보기</button>
+        </div>
+      </div>`).join('');
+  }catch{el.innerHTML='<div style="font-size:12px;color:var(--text-3)">불러오기 실패</div>';}
+}
+
+async function adminApproveGame(id){
+  const comment=prompt('승인 메시지 (선택사항):')||'';
+  const res=await fetch(`/api/block-games/${id}/approve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:state.adminPw,comment})});
+  const data=await res.json();
+  if(data.success){showToast('게임 승인 완료!','success');loadPendingGames();}
+  else showToast(data.error||'오류','error');
+}
+
+async function adminRejectGame(id){
+  const comment=prompt('거절 이유를 입력하세요:')||'부적절한 내용';
+  const res=await fetch(`/api/block-games/${id}/reject`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:state.adminPw,comment})});
+  const data=await res.json();
+  if(data.success){showToast('게임 거절됨','info');loadPendingGames();}
+  else showToast(data.error||'오류','error');
+}
+
+socket.on('blockGameApproved',({title})=>showToast(`🎉 "${title}" 게임이 승인되어 게임존에 공개되었습니다!`,'success'));
+socket.on('blockGameRejected',({title,comment})=>showToast(`"${title}" 게임이 거절되었습니다. 사유: ${comment}`,'error'));

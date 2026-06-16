@@ -2171,3 +2171,244 @@ input::placeholder, textarea::placeholder { color: var(--text-4); }
 .game-room-item .room-info { flex: 1; }
 .game-room-item .room-name { font-weight: 600; }
 .game-room-item .room-meta { font-size: 11px; color: var(--text-3); }
+
+/* =============================================
+   체스 보드
+   ============================================= */
+.chess-board {
+  display: grid;
+  grid-template-columns: repeat(8, 52px);
+  grid-template-rows: repeat(8, 52px);
+  border: 3px solid #5d3a1a;
+  border-radius: 4px;
+  margin: 0 auto;
+  width: fit-content;
+  user-select: none;
+}
+.chess-cell {
+  width: 52px; height: 52px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 34px; line-height: 1; cursor: pointer;
+  transition: background .1s;
+  position: relative;
+}
+.chess-cell.light { background: #f0d9b5; }
+.chess-cell.dark  { background: #b58863; }
+.chess-cell.selected  { background: #7fc97f !important; }
+.chess-cell.possible  { background: #7fc9c9 !important; }
+.chess-cell.possible::after {
+  content: '';
+  position: absolute;
+  width: 22px; height: 22px;
+  background: rgba(0,0,0,.2);
+  border-radius: 50%;
+}
+
+/* =============================================
+   유저 게임 목록
+   ============================================= */
+.user-games-list { display: flex; flex-direction: column; gap: 8px; }
+.user-game-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+}
+.user-game-item:hover { border-color: var(--accent); box-shadow: var(--shadow); }
+.user-game-thumb {
+  width: 60px; height: 45px;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; flex-shrink: 0;
+}
+.user-game-info { flex: 1; min-width: 0; }
+.user-game-title { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.user-game-meta { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+
+/* =============================================
+   블록 코딩 에디터
+   ============================================= */
+#view-blockcode { padding: 0 !important; display: flex; flex-direction: column; }
+
+.bc-layout {
+  display: grid;
+  grid-template-columns: 200px 1fr 280px;
+  height: calc(100vh - 60px);
+  overflow: hidden;
+}
+
+/* 팔레트 */
+.bc-palette {
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.bc-palette-title {
+  font-size: 11px; font-weight: 800; text-transform: uppercase;
+  color: var(--text-3); padding: 4px 10px 8px; letter-spacing: .5px;
+}
+.bc-cat-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px; cursor: pointer;
+  font-size: 12px; font-weight: 700;
+  border-left: 3px solid transparent;
+  transition: background .1s;
+}
+.bc-cat-header:hover { background: var(--bg-hover); }
+.bc-cat-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.bc-cat-blocks { padding: 2px 0 4px 10px; display: none; }
+.bc-cat-blocks.open { display: block; }
+.bc-block-item {
+  display: block; width: 100%;
+  text-align: left; border: none; outline: none;
+  background: transparent; cursor: pointer;
+  padding: 4px 6px; margin: 2px 0;
+  font-size: 11px;
+  border-radius: var(--radius-sm);
+  transition: background .1s;
+}
+.bc-block-item:hover { background: var(--bg-hover); }
+.bc-block-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 20px;
+  font-size: 11px; font-weight: 600; color: #fff;
+  cursor: pointer; white-space: nowrap;
+  width: 100%; box-sizing: border-box;
+  transition: opacity .1s;
+}
+.bc-block-pill:hover { opacity: .85; }
+
+/* 작업공간 */
+.bc-workspace {
+  display: flex; flex-direction: column;
+  background: var(--bg-input);
+  overflow: hidden;
+}
+.bc-ws-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+}
+.bc-script-area {
+  flex: 1; overflow-y: auto; padding: 10px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.bc-empty-hint {
+  text-align: center; padding: 30px 0;
+  color: var(--text-3); font-size: 13px;
+}
+
+/* 스크립트 블록 */
+.bc-script-block {
+  display: flex; flex-direction: column;
+  border-radius: 6px; overflow: hidden;
+  border: 1px solid rgba(0,0,0,.1);
+}
+.bc-script-block-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; color: #fff; font-size: 12px; font-weight: 600;
+  min-height: 32px;
+}
+.bc-script-block-label { flex: 1; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.bc-script-param {
+  background: rgba(255,255,255,.25);
+  border: 1px solid rgba(255,255,255,.4);
+  border-radius: 4px; padding: 0 4px;
+  font-size: 11px; font-weight: 700; color: #fff;
+  min-width: 28px; text-align: center;
+  cursor: pointer;
+}
+.bc-script-param:focus { outline: 2px solid rgba(255,255,255,.8); }
+.bc-script-block-btns { display: flex; gap: 2px; }
+.bc-script-block-btn {
+  background: rgba(255,255,255,.2); border: none; cursor: pointer;
+  color: #fff; padding: 2px 5px; border-radius: 3px; font-size: 10px;
+  transition: background .1s;
+}
+.bc-script-block-btn:hover { background: rgba(255,255,255,.4); }
+
+/* 중첩 블록 영역 */
+.bc-children {
+  margin-left: 18px;
+  border-left: 3px solid rgba(0,0,0,.15);
+  padding: 3px 0 3px 6px;
+  display: flex; flex-direction: column; gap: 4px;
+  background: rgba(255,255,255,.1);
+}
+.bc-add-child-btn {
+  font-size: 10px; padding: 3px 8px;
+  background: rgba(255,255,255,.2);
+  border: 1px dashed rgba(255,255,255,.5);
+  border-radius: 4px; cursor: pointer;
+  color: rgba(255,255,255,.8); margin: 2px 0 4px;
+  transition: background .1s;
+}
+.bc-add-child-btn:hover { background: rgba(255,255,255,.35); }
+.bc-block-end { padding: 3px 8px; font-size: 11px; color: #fff; font-weight: 600; }
+
+/* 미리보기 패널 */
+.bc-preview {
+  background: var(--bg-card);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+  padding: 8px;
+}
+.bc-preview-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.bc-canvas {
+  display: block; width: 100%;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #87ceeb;
+  cursor: crosshair;
+  image-rendering: pixelated;
+}
+.bc-sprite-settings {
+  margin-top: 10px;
+  padding: 8px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.bc-input {
+  width: 100%; padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px; font-size: 12px;
+  background: var(--bg-card); color: var(--text-1);
+  box-sizing: border-box; margin-top: 2px;
+}
+.bc-submit-area {
+  margin-top: 10px; padding: 8px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+/* 관리자 심사 카드 */
+.pending-game-card {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px; margin-bottom: 8px;
+}
+.pending-game-title { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+.pending-game-meta { font-size: 11px; color: var(--text-3); margin-bottom: 8px; }
+.pending-game-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+@media (max-width: 900px) {
+  .bc-layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
+  .bc-palette { max-height: 180px; border-right: none; border-bottom: 1px solid var(--border); }
+  .bc-preview { border-left: none; border-top: 1px solid var(--border); }
+  .bc-canvas { height: 160px; }
+  .chess-board { grid-template-columns: repeat(8, 38px); grid-template-rows: repeat(8, 38px); }
+  .chess-cell { width: 38px; height: 38px; font-size: 24px; }
+}
