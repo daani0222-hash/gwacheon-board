@@ -1383,6 +1383,7 @@ function switchView(viewName) {
   if (viewName === 'explore') loadExploreView();
   if (viewName === 'ranking') loadRankings();
   if (viewName === 'members') loadMembers();
+  if (viewName === 'games') { loadUserGames(); }
   closeSidebar();
 }
 
@@ -3258,26 +3259,76 @@ function bcRenderBlock(block, isTop) {
   return wrap;
 }
 
+function openBlockCoder() {
+  $('bcModal').classList.remove('hidden');
+  bcInitPalette();
+  bcRenderScript();
+  bcDrawPreview();
+}
+
+function closeBlockCoder() {
+  bcStop();
+  $('bcModal').classList.add('hidden');
+}
+
+function bcSetBg(color) {
+  bcBgColor = color;
+  const el = $('bcBgColor');
+  if (el) el.value = color;
+  bcDrawPreview();
+}
+
+const BC_CHARS = {
+  person:   { shape:'emoji', emoji:'🧍', w:36, h:36 },
+  cat:      { shape:'emoji', emoji:'🐱', w:36, h:36 },
+  rocket:   { shape:'emoji', emoji:'🚀', w:36, h:36 },
+  star:     { shape:'emoji', emoji:'⭐', w:36, h:36 },
+  circle:   { shape:'circle', w:36, h:36 },
+  rect:     { shape:'rect',   w:36, h:36 },
+  triangle: { shape:'triangle', w:36, h:36 },
+};
+
+function bcSetChar(charKey) {
+  const ch = BC_CHARS[charKey];
+  if (!ch) return;
+  bcSprite.shape = ch.shape;
+  bcSprite.emoji = ch.emoji || null;
+  document.querySelectorAll('.bc-char-btn').forEach(b => b.classList.remove('active'));
+  const btn = [...document.querySelectorAll('.bc-char-btn')].find(b => b.title === { person:'사람',cat:'고양이',rocket:'로켓',star:'별',circle:'원',rect:'사각형',triangle:'삼각형' }[charKey]);
+  if (btn) btn.classList.add('active');
+  bcDrawPreview();
+}
+
 function bcUpdateSprite() {
   bcSprite.color = $('bcSpriteColor')?.value||'#3b82f6';
-  bcSprite.shape = $('bcSpriteShape')?.value||'rect';
   bcSprite.w=bcSprite.h=parseInt($('bcSpriteSize')?.value||40);
   bcSprite.label = $('bcSpriteLabel')?.value||'';
   bcBgColor = $('bcBgColor')?.value||'#87ceeb';
   bcDrawPreview();
 }
 
+function bcDrawSprite(ctx, sp) {
+  if (!sp.visible) return;
+  const {x,y,w,h,shape,color,label,emoji}=sp;
+  if (shape==='emoji' && emoji) {
+    ctx.font = `${w}px serif`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(emoji, x, y);
+    ctx.textBaseline='alphabetic';
+  } else {
+    ctx.fillStyle=color;
+    if(shape==='circle'){ctx.beginPath();ctx.arc(x,y,w/2,0,Math.PI*2);ctx.fill();}
+    else if(shape==='triangle'){ctx.beginPath();ctx.moveTo(x,y-h/2);ctx.lineTo(x+w/2,y+h/2);ctx.lineTo(x-w/2,y+h/2);ctx.closePath();ctx.fill();}
+    else{ctx.fillRect(x-w/2,y-h/2,w,h);}
+  }
+  if(label){ctx.fillStyle='#222';ctx.font='bold 11px sans-serif';ctx.textAlign='center';ctx.fillText(label,x,y+w/2+12);}
+}
+
 function bcDrawPreview() {
   const canvas=$('bcCanvas'); if(!canvas) return;
   const ctx=canvas.getContext('2d');
   ctx.fillStyle=bcBgColor; ctx.fillRect(0,0,canvas.width,canvas.height);
-  if (!bcSprite.visible) return;
-  ctx.fillStyle=bcSprite.color;
-  const {x,y,w,h,shape}=bcSprite;
-  if(shape==='circle'){ctx.beginPath();ctx.arc(x,y,w/2,0,Math.PI*2);ctx.fill();}
-  else if(shape==='triangle'){ctx.beginPath();ctx.moveTo(x,y-h/2);ctx.lineTo(x+w/2,y+h/2);ctx.lineTo(x-w/2,y+h/2);ctx.closePath();ctx.fill();}
-  else{ctx.fillRect(x-w/2,y-h/2,w,h);}
-  if(bcSprite.label){ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.textAlign='center';ctx.fillText(bcSprite.label,x,y+4);}
+  bcDrawSprite(ctx, bcSprite);
   let varY=14;
   bcShownVars.forEach(name=>{
     ctx.fillStyle='rgba(0,0,0,.65)';ctx.fillRect(4,varY-11,100,16);
@@ -3372,13 +3423,7 @@ async function bcSubmit(){
   }catch{showToast('제출 중 오류 발생','error');}
 }
 
-// switchView 확장
-const _origSwitch=switchView;
-function switchView(viewName){
-  _origSwitch(viewName);
-  if(viewName==='blockcode'){bcInitPalette();bcRenderScript();bcDrawPreview();}
-  if(viewName==='games') loadUserGames();
-}
+// (switchView 확장은 원본 함수에 통합됨)
 
 // ---- 유저 게임 목록 ----
 async function loadUserGames(){
@@ -3472,13 +3517,7 @@ function userGameRun(){
     if(!running)return;
     const ctx=canvas.getContext('2d');
     ctx.fillStyle=bgColor;ctx.fillRect(0,0,W,H);
-    if(sprite.visible){
-      ctx.fillStyle=sprite.color;
-      if(sprite.shape==='circle'){ctx.beginPath();ctx.arc(sprite.x,sprite.y,sprite.w/2,0,Math.PI*2);ctx.fill();}
-      else if(sprite.shape==='triangle'){ctx.beginPath();ctx.moveTo(sprite.x,sprite.y-sprite.h/2);ctx.lineTo(sprite.x+sprite.w/2,sprite.y+sprite.h/2);ctx.lineTo(sprite.x-sprite.w/2,sprite.y+sprite.h/2);ctx.closePath();ctx.fill();}
-      else{ctx.fillRect(sprite.x-sprite.w/2,sprite.y-sprite.h/2,sprite.w,sprite.h);}
-      if(sprite.label){ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.textAlign='center';ctx.fillText(sprite.label,sprite.x,sprite.y+4);}
-    }
+    bcDrawSprite(ctx, sprite);
     let vy=14;
     shownVars.forEach(name=>{ctx.fillStyle='rgba(0,0,0,.65)';ctx.fillRect(4,vy-11,100,16);ctx.fillStyle='#fff';ctx.font='11px sans-serif';ctx.textAlign='left';ctx.fillText(`${name}: ${vars[name]??0}`,8,vy);vy+=19;});
     requestAnimationFrame(draw);
