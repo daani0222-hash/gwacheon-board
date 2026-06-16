@@ -12,7 +12,7 @@
   <meta property="og:url" content="https://gwacheon-board.onrender.com" />
   <meta property="og:type" content="website" />
   <link rel="canonical" href="https://gwacheon-board.onrender.com" />
-  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/style.css?v=203" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" />
 </head>
 <body>
@@ -512,6 +512,24 @@
             </div>
             <i class="fa-solid fa-chevron-right" style="color:var(--text-3)"></i>
           </div>
+          <!-- 테트리스 -->
+          <div class="game-card" onclick="openGame('tetris')">
+            <div class="game-card-icon">🟦</div>
+            <div class="game-card-info">
+              <div class="game-card-name">테트리스</div>
+              <div class="game-card-desc">1인용 · 레벨 시스템 · 롱플레이</div>
+            </div>
+            <i class="fa-solid fa-chevron-right" style="color:var(--text-3)"></i>
+          </div>
+          <!-- 2048 -->
+          <div class="game-card" onclick="openGame('g2048')">
+            <div class="game-card-icon">🔢</div>
+            <div class="game-card-info">
+              <div class="game-card-name">2048</div>
+              <div class="game-card-desc">1인용 · 퍼즐 · 최고기록 도전</div>
+            </div>
+            <i class="fa-solid fa-chevron-right" style="color:var(--text-3)"></i>
+          </div>
         </div>
 
         <!-- 게임 만들기 -->
@@ -546,8 +564,23 @@
             <h3 id="gameModalTitle">게임</h3>
             <button class="icon-btn" onclick="closeGame()"><i class="fa-solid fa-xmark"></i></button>
           </div>
+          <!-- 레이팅 바 -->
+          <div id="gameRatingBar" class="game-rating-bar hidden">
+            <span class="rating-label">내 레이팅</span>
+            <span id="gameRatingVal" class="rating-val">1200</span>
+            <span class="rating-badge" id="gameRatingBadge">Silver</span>
+          </div>
           <!-- 게임 모드 선택 -->
           <div id="gameModeSelect">
+            <!-- 난이도 선택 (AI 게임용) -->
+            <div id="difficultySelect" class="difficulty-select hidden">
+              <div class="diff-label"><i class="fa-solid fa-gauge"></i> AI 난이도 선택</div>
+              <div class="diff-btns">
+                <button class="diff-btn" data-diff="easy" onclick="setDifficulty('easy')">🟢 쉬움</button>
+                <button class="diff-btn active" data-diff="medium" onclick="setDifficulty('medium')">🟡 보통</button>
+                <button class="diff-btn" data-diff="hard" onclick="setDifficulty('hard')">🔴 어려움</button>
+              </div>
+            </div>
             <div class="game-mode-btns">
               <button class="btn btn-primary" onclick="startGame('ai')"><i class="fa-solid fa-robot"></i> 1인용 (AI 대전)</button>
               <button class="btn btn-outline" onclick="showMultiLobby()"><i class="fa-solid fa-user-group"></i> 2인용 (온라인)</button>
@@ -791,6 +824,6 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=203"></script>
 </body>
 </html>

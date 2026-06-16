@@ -331,7 +331,7 @@ function isHoFWinner(userId) {
 // =============================================
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.static('public'));
+app.use(express.static('public', { etag: false, maxAge: 0, setHeaders: (res) => { res.set('Cache-Control', 'no-cache, no-store, must-revalidate'); } }));
 app.use('/uploads', express.static('uploads'));
 
 if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
