@@ -12,7 +12,7 @@
   <meta property="og:url" content="https://gwacheon-board.onrender.com" />
   <meta property="og:type" content="website" />
   <link rel="canonical" href="https://gwacheon-board.onrender.com" />
-  <link rel="stylesheet" href="/style.css?v=204" />
+  <link rel="stylesheet" href="/style.css?v=205" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" />
 </head>
 <body>
@@ -706,95 +706,118 @@
         </div>
       </div>
 
-      <!-- 블록 코딩 전체화면 모달 -->
+      <!-- 블록 코딩 전체화면 모달 (Scratch 스타일) -->
       <div id="bcModal" class="modal-overlay hidden" style="align-items:stretch;padding:0">
-        <div style="display:flex;flex-direction:column;width:100%;height:100%;background:var(--bg-body)">
-          <!-- 헤더 -->
-          <div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--bg-card);border-bottom:1px solid var(--border);flex-shrink:0">
-            <span style="font-size:18px">🧩</span>
-            <span style="font-weight:800;font-size:15px">블록 코딩 에디터</span>
+        <div class="scratch-ide">
+          <!-- 상단 바 -->
+          <div class="scratch-bar">
+            <span style="font-size:22px;flex-shrink:0">🐱</span>
+            <button class="scratch-flag" id="bcRunBtn" onclick="bcRun()" title="시작">▶</button>
+            <button class="scratch-stop" id="bcStopBtn" onclick="bcStop()" title="정지" style="display:none">■</button>
             <div style="flex:1"></div>
-            <button class="btn btn-primary btn-sm" id="bcRunBtn" onclick="bcRun()"><i class="fa-solid fa-play"></i> 실행</button>
-            <button class="btn btn-danger btn-sm" id="bcStopBtn" onclick="bcStop()" style="display:none"><i class="fa-solid fa-stop"></i> 정지</button>
-            <button class="btn btn-ghost btn-sm" onclick="bcClearScript()"><i class="fa-solid fa-trash"></i></button>
-            <button class="icon-btn" onclick="closeBlockCoder()" title="닫기"><i class="fa-solid fa-xmark"></i></button>
+            <input type="text" id="bcGameTitle" class="scratch-title-inp" placeholder="게임 제목..." maxlength="50">
+            <button class="scratch-btn-submit" onclick="bcSubmit()">📤 제출</button>
+            <button class="scratch-btn-ico" onclick="bcClearScript()" title="스크립트 초기화">🗑</button>
+            <button class="scratch-btn-ico" onclick="closeBlockCoder()" title="닫기">✕</button>
           </div>
-
-          <!-- 3열 레이아웃 -->
-          <div class="bc-layout" style="flex:1;min-height:0">
-            <!-- 왼쪽: 블록 팔레트 -->
-            <div class="bc-palette">
-              <div class="bc-palette-title"><i class="fa-solid fa-cubes"></i> 블록 팔레트</div>
-              <div id="bcPalette"></div>
-            </div>
-
-            <!-- 가운데: 스크립트 -->
-            <div class="bc-workspace">
-              <div class="bc-ws-header">
-                <span style="font-weight:700;font-size:13px"><i class="fa-solid fa-code"></i> 스크립트 에디터</span>
-                <span style="font-size:11px;color:var(--text-3)">블록을 클릭해서 추가 → ▲▼으로 순서 변경</span>
-              </div>
-              <div id="bcScriptArea" class="bc-script-area">
-                <div class="bc-empty-hint">← 왼쪽 팔레트에서 블록을 클릭하세요</div>
+          <!-- 본문 -->
+          <div class="scratch-body">
+            <!-- 카테고리 탭 -->
+            <div class="scratch-cats" id="scratchCats"></div>
+            <!-- 블록 팔레트 -->
+            <div class="scratch-pal" id="scratchPal"></div>
+            <!-- 스크립트 작업 공간 -->
+            <div class="scratch-ws">
+              <div class="scratch-ws-header">스크립트 영역 — 팔레트에서 블록을 클릭해 추가하세요 (▲▼ 순서 변경)</div>
+              <div class="scratch-ws-area" id="bcScriptArea">
+                <div class="scratch-ws-empty">← 왼쪽 팔레트에서 블록을 클릭하세요</div>
               </div>
             </div>
-
-            <!-- 오른쪽: 미리보기 + 설정 -->
-            <div class="bc-preview">
-              <div style="font-weight:700;font-size:13px;margin-bottom:8px"><i class="fa-solid fa-eye"></i> 미리보기</div>
-
-              <!-- 캔버스 -->
-              <canvas id="bcCanvas" class="bc-canvas" width="360" height="270"></canvas>
-
-              <!-- 배경 선택 -->
-              <div class="bc-sprite-settings" style="margin-top:8px">
-                <div style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:6px">🌄 배경 설정</div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
-                  <div class="bc-bg-btn" style="background:#87ceeb" onclick="bcSetBg('#87ceeb')" title="하늘"></div>
-                  <div class="bc-bg-btn" style="background:#1a3a1a" onclick="bcSetBg('#1a3a1a')" title="숲"></div>
-                  <div class="bc-bg-btn" style="background:#0a0a2e" onclick="bcSetBg('#0a0a2e')" title="우주"></div>
-                  <div class="bc-bg-btn" style="background:#f4e4a1" onclick="bcSetBg('#f4e4a1')" title="사막"></div>
-                  <div class="bc-bg-btn" style="background:#1a1a2e" onclick="bcSetBg('#1a1a2e')" title="밤"></div>
-                  <div class="bc-bg-btn" style="background:#e8f4f8" onclick="bcSetBg('#e8f4f8')" title="흰방"></div>
-                  <label style="display:flex;align-items:center;font-size:10px;gap:3px;color:var(--text-3)">직접:
-                    <input type="color" id="bcBgColor" value="#87ceeb" onchange="bcUpdateSprite()" style="width:24px;height:20px;border:none;padding:0;cursor:pointer">
-                  </label>
-                </div>
+            <!-- 오른쪽: 스테이지 + 스프라이트 -->
+            <div class="scratch-right">
+              <div class="scratch-stage-wrap">
+                <canvas id="bcCanvas" class="scratch-stage" width="480" height="360"></canvas>
               </div>
-
-              <!-- 캐릭터(스프라이트) 설정 -->
-              <div class="bc-sprite-settings">
-                <div style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:6px">🎭 캐릭터 설정</div>
-                <!-- 기본 캐릭터 선택 -->
-                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
-                  <div class="bc-char-btn" onclick="bcSetChar('person')" title="사람">🧍</div>
-                  <div class="bc-char-btn" onclick="bcSetChar('cat')" title="고양이">🐱</div>
-                  <div class="bc-char-btn" onclick="bcSetChar('rocket')" title="로켓">🚀</div>
-                  <div class="bc-char-btn" onclick="bcSetChar('star')" title="별">⭐</div>
-                  <div class="bc-char-btn" onclick="bcSetChar('circle')" title="원">●</div>
-                  <div class="bc-char-btn" onclick="bcSetChar('rect')" title="사각형">■</div>
-                  <div class="bc-char-btn" onclick="bcSetChar('triangle')" title="삼각형">▲</div>
+              <div class="scratch-sprite-area">
+                <!-- 스프라이트 / 배경 패널 -->
+                <div class="scratch-sprite-header">
+                  <span style="flex:1">스프라이트</span>
+                  <span style="flex:1;padding-left:8px">배경</span>
                 </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-                  <label style="font-size:11px">색상
-                    <input type="color" id="bcSpriteColor" class="bc-input" value="#3b82f6" onchange="bcUpdateSprite()">
-                  </label>
-                  <label style="font-size:11px">크기
-                    <input type="number" id="bcSpriteSize" class="bc-input" value="40" min="10" max="150" onchange="bcUpdateSprite()">
-                  </label>
+                <div class="scratch-sprite-panels">
+                  <!-- 스프라이트 카드 -->
+                  <div class="scratch-sprite-card active" id="scratchSpriteCard">
+                    <div class="scratch-sprite-preview" id="scratchSpritePreviewEmoji">🐱</div>
+                    <div class="scratch-sprite-name">스프라이트1</div>
+                  </div>
+                  <!-- 배경 목록 -->
+                  <div>
+                    <div class="scratch-bd-list">
+                      <div class="scratch-bd" style="background:#87ceeb;color:#333" onclick="bcSetBg('#87ceeb')" title="하늘">하늘</div>
+                      <div class="scratch-bd" style="background:#1a3a1a" onclick="bcSetBg('#1a3a1a')" title="숲">숲</div>
+                      <div class="scratch-bd" style="background:#0a0a2e" onclick="bcSetBg('#0a0a2e')" title="우주">우주</div>
+                      <div class="scratch-bd" style="background:#f4e4a1;color:#333" onclick="bcSetBg('#f4e4a1')" title="사막">사막</div>
+                      <div class="scratch-bd" style="background:#c8a068;color:#fff" onclick="bcSetBg('#c8a068')" title="실내">실내</div>
+                      <div class="scratch-bd" style="background:#1a1a2e" onclick="bcSetBg('#1a1a2e')" title="밤">밤</div>
+                      <label class="scratch-bd" style="background:#444;cursor:pointer" title="직접 선택">
+                        <input type="color" id="bcBgColor" value="#87ceeb" onchange="bcSetBg(this.value)" style="opacity:0;width:0;height:0;position:absolute">
+                        🎨
+                      </label>
+                    </div>
+                  </div>
                 </div>
-                <label style="font-size:11px;display:block;margin-top:6px">텍스트 (선택)
-                  <input type="text" id="bcSpriteLabel" class="bc-input" placeholder="없음" maxlength="8" oninput="bcUpdateSprite()">
-                </label>
-              </div>
-
-              <!-- 제출 -->
-              <div class="bc-submit-area">
-                <input type="text" id="bcGameTitle" class="bc-input" placeholder="게임 제목..." maxlength="50">
-                <button class="btn btn-primary" style="width:100%;margin-top:6px" onclick="bcSubmit()">
-                  <i class="fa-solid fa-paper-plane"></i> 관리자에게 제출
-                </button>
-                <div style="font-size:10px;color:var(--text-3);text-align:center;margin-top:4px">승인 후 게임존에 공개됩니다</div>
+                <!-- 속성 -->
+                <div class="scratch-props">
+                  <div class="scratch-prop-row">
+                    <div class="scratch-prop">
+                      <label>스프라이트</label>
+                      <input type="text" id="bcSpriteLabel" value="스프라이트1" maxlength="12" oninput="bcUpdateSprite()">
+                    </div>
+                    <div class="scratch-prop">
+                      <label>X</label>
+                      <input type="number" id="bcSpritePropX" value="240" oninput="bcMoveSprite()">
+                    </div>
+                    <div class="scratch-prop">
+                      <label>Y</label>
+                      <input type="number" id="bcSpritePropY" value="180" oninput="bcMoveSprite()">
+                    </div>
+                  </div>
+                  <div class="scratch-prop-row">
+                    <div class="scratch-prop">
+                      <label>크기</label>
+                      <input type="number" id="bcSpriteSize" value="40" min="5" max="200" oninput="bcUpdateSprite()">
+                    </div>
+                    <div class="scratch-prop">
+                      <label>방향</label>
+                      <input type="number" id="bcSpriteDir" value="90" min="-180" max="180" oninput="bcUpdateSprite()">
+                    </div>
+                    <div class="scratch-prop" style="justify-content:center;align-items:center;flex-direction:row;gap:4px;padding-top:14px">
+                      <label style="margin:0">보이기</label>
+                      <input type="checkbox" id="bcSpriteVisible" checked onchange="bcUpdateSprite()">
+                    </div>
+                  </div>
+                </div>
+                <!-- 캐릭터 선택 -->
+                <div style="font-size:10px;font-weight:700;color:#575E75;margin-bottom:4px">캐릭터 선택</div>
+                <div class="scratch-char-grid">
+                  <div class="scratch-char active" onclick="bcSetChar('cat')" data-char="cat" title="cat">🐱</div>
+                  <div class="scratch-char" onclick="bcSetChar('dog')" data-char="dog" title="dog">🐶</div>
+                  <div class="scratch-char" onclick="bcSetChar('duck')" data-char="duck" title="duck">🦆</div>
+                  <div class="scratch-char" onclick="bcSetChar('bear')" data-char="bear" title="bear">🐻</div>
+                  <div class="scratch-char" onclick="bcSetChar('bunny')" data-char="bunny" title="bunny">🐰</div>
+                  <div class="scratch-char" onclick="bcSetChar('tiger')" data-char="tiger" title="tiger">🐯</div>
+                  <div class="scratch-char" onclick="bcSetChar('person')" data-char="person" title="person">🧍</div>
+                  <div class="scratch-char" onclick="bcSetChar('robot')" data-char="robot" title="robot">🤖</div>
+                  <div class="scratch-char" onclick="bcSetChar('rocket')" data-char="rocket" title="rocket">🚀</div>
+                  <div class="scratch-char" onclick="bcSetChar('star')" data-char="star" title="star">⭐</div>
+                  <div class="scratch-char" onclick="bcSetChar('ball')" data-char="ball" title="ball">🔴</div>
+                  <div class="scratch-char" onclick="bcSetChar('arrow')" data-char="arrow" title="arrow">➤</div>
+                </div>
+                <!-- 스프라이트 색상 (비이모지용) -->
+                <div class="scratch-color-row">
+                  <span>색상:</span>
+                  <input type="color" id="bcSpriteColor" value="#3b82f6" onchange="bcUpdateSprite()">
+                </div>
               </div>
             </div>
           </div>
@@ -888,6 +911,6 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/app.js?v=204"></script>
+  <script src="/app.js?v=205"></script>
 </body>
 </html>

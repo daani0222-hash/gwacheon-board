@@ -3732,96 +3732,184 @@ function init2048() {
 }
 
 // =============================================
-// 블록 코딩 시스템
+// 블록 코딩 시스템 (Scratch 스타일)
 // =============================================
 
-const BC_CATS = [
-  { id:'event',    label:'이벤트',  color:'#f59e0b', blocks:[
-    { type:'event_start',   label:'🚀 시작하면',               params:[] },
-    { type:'event_keydown', label:'⌨️ [key] 키를 눌렀을 때', params:[{name:'key',type:'keysel',default:'오른쪽'}] },
+const SCRATCH_CATS = [
+  { id:'motion',    label:'동작',   color:'#4C97FF', dark:'#4280D7', blocks:[
+    { type:'motion_move',     label:'[n] 만큼 움직이기',           params:[{name:'n',type:'num',default:'10'}] },
+    { type:'motion_turnr',    label:'[n] 도 오른쪽 돌기',          params:[{name:'n',type:'num',default:'15'}] },
+    { type:'motion_turnl',    label:'[n] 도 왼쪽 돌기',           params:[{name:'n',type:'num',default:'15'}] },
+    { type:'motion_goto',     label:'x:[x] y:[y] 로 이동하기',    params:[{name:'x',type:'num',default:'0'},{name:'y',type:'num',default:'0'}] },
+    { type:'motion_glide',    label:'[t]초 동안 x:[x] y:[y] 로',  params:[{name:'t',type:'num',default:'1'},{name:'x',type:'num',default:'0'},{name:'y',type:'num',default:'0'}] },
+    { type:'motion_x',        label:'x좌표를 [n] 만큼 바꾸기',     params:[{name:'n',type:'num',default:'10'}] },
+    { type:'motion_y',        label:'y좌표를 [n] 만큼 바꾸기',     params:[{name:'n',type:'num',default:'10'}] },
+    { type:'motion_setx',     label:'x좌표를 [x] 로 정하기',       params:[{name:'x',type:'num',default:'0'}] },
+    { type:'motion_sety',     label:'y좌표를 [y] 로 정하기',       params:[{name:'y',type:'num',default:'0'}] },
+    { type:'motion_dir',      label:'[deg] 도 방향 보기',          params:[{name:'deg',type:'num',default:'90'}] },
+    { type:'motion_bounce',   label:'벽에 닿으면 튕기기',          params:[] },
+    { type:'motion_velx',     label:'가로속도를 [vx] 로 정하기',   params:[{name:'vx',type:'num',default:'3'}] },
+    { type:'motion_vely',     label:'세로속도를 [vy] 로 정하기',   params:[{name:'vy',type:'num',default:'3'}] },
+    { type:'motion_applyvel', label:'속도 적용하기',               params:[] },
   ]},
-  { id:'motion',   label:'이동',    color:'#3b82f6', blocks:[
-    { type:'motion_x',      label:'➡️ X를 [n] 만큼 바꾸기',    params:[{name:'n',type:'num',default:'10'}] },
-    { type:'motion_y',      label:'⬆️ Y를 [n] 만큼 바꾸기',    params:[{name:'n',type:'num',default:'10'}] },
-    { type:'motion_setx',   label:'📍 X 위치를 [x] 로 정하기', params:[{name:'x',type:'num',default:'160'}] },
-    { type:'motion_sety',   label:'📍 Y 위치를 [y] 로 정하기', params:[{name:'y',type:'num',default:'120'}] },
-    { type:'motion_bounce', label:'🔄 벽에서 튕기기',           params:[] },
-    { type:'motion_velx',   label:'💨 가로 속도를 [vx] 로',    params:[{name:'vx',type:'num',default:'2'}] },
-    { type:'motion_vely',   label:'💨 세로 속도를 [vy] 로',    params:[{name:'vy',type:'num',default:'2'}] },
-    { type:'motion_applyvel',label:'▶️ 속도 적용하기',          params:[] },
+  { id:'looks',     label:'형태',   color:'#9966FF', dark:'#855CD6', blocks:[
+    { type:'looks_say',        label:'[text] 라고 [t] 초 말하기',  params:[{name:'text',type:'text',default:'안녕!'},{name:'t',type:'num',default:'2'}] },
+    { type:'looks_sayperm',    label:'[text] 라고 말하기',         params:[{name:'text',type:'text',default:'안녕!'}] },
+    { type:'looks_think',      label:'[text] 라고 [t] 초 생각하기',params:[{name:'text',type:'text',default:'흠...'},{name:'t',type:'num',default:'2'}] },
+    { type:'looks_stopsay',    label:'말풍선 지우기',              params:[] },
+    { type:'looks_size',       label:'크기를 [size] % 로 정하기',  params:[{name:'size',type:'num',default:'100'}] },
+    { type:'looks_changesize', label:'크기를 [n] % 만큼 바꾸기',   params:[{name:'n',type:'num',default:'10'}] },
+    { type:'looks_color',      label:'색을 [color] 로 정하기',     params:[{name:'color',type:'color',default:'#ff0000'}] },
+    { type:'looks_show',       label:'보이기',                     params:[] },
+    { type:'looks_hide',       label:'숨기기',                     params:[] },
+    { type:'looks_label',      label:'텍스트를 [text] 로 정하기',  params:[{name:'text',type:'text',default:'안녕!'}] },
   ]},
-  { id:'looks',    label:'생김새',  color:'#8b5cf6', blocks:[
-    { type:'looks_color',  label:'🎨 색을 [color] 로 바꾸기',   params:[{name:'color',type:'color',default:'#ff0000'}] },
-    { type:'looks_size',   label:'📏 크기를 [size] 로 정하기',  params:[{name:'size',type:'num',default:'40'}] },
-    { type:'looks_show',   label:'👁 보이기',                   params:[] },
-    { type:'looks_hide',   label:'🙈 숨기기',                   params:[] },
-    { type:'looks_label',  label:'🏷 텍스트를 [text] 로 정하기',params:[{name:'text',type:'text',default:'안녕!'}] },
+  { id:'sound',     label:'소리',   color:'#CF63CF', dark:'#C94FC9', blocks:[
+    { type:'sound_beep',   label:'삑 소리내기',                    params:[] },
+    { type:'sound_note',   label:'[note] 번 음 [t] 박자 연주',     params:[{name:'note',type:'num',default:'60'},{name:'t',type:'num',default:'0.5'}] },
+    { type:'sound_drum',   label:'드럼 효과내기',                  params:[] },
+    { type:'sound_vol',    label:'음량을 [vol] % 로 정하기',       params:[{name:'vol',type:'num',default:'100'}] },
   ]},
-  { id:'control',  label:'제어',    color:'#f97316', blocks:[
-    { type:'control_forever',label:'♾ 계속 반복하기',           params:[],                                     hasChildren:true },
-    { type:'control_repeat', label:'🔢 [n] 번 반복하기',         params:[{name:'n',type:'num',default:'10'}],  hasChildren:true },
-    { type:'control_wait',   label:'⏰ [n] 초 기다리기',         params:[{name:'n',type:'num',default:'1'}] },
-    { type:'control_if',     label:'❓ 만약 [cond] 이라면',      params:[{name:'cond',type:'cond',default:'right_key'}], hasChildren:true },
+  { id:'events',    label:'이벤트', color:'#FFAB19', dark:'#CF8B17', blocks:[
+    { type:'event_start',     label:'클릭했을 때',                 isHat:true, params:[], hasChildren:true },
+    { type:'event_keydown',   label:'[key] 키를 눌렀을 때',       isHat:true, params:[{name:'key',type:'keysel',default:'오른쪽'}], hasChildren:true },
+    { type:'event_click',     label:'이 스프라이트 클릭했을 때',   isHat:true, params:[], hasChildren:true },
+    { type:'event_broadcast', label:'[msg] 방송하기',             params:[{name:'msg',type:'text',default:'메시지1'}] },
+    { type:'event_receive',   label:'[msg] 를 받았을 때',         isHat:true, params:[{name:'msg',type:'text',default:'메시지1'}], hasChildren:true },
   ]},
-  { id:'sense',    label:'감지',    color:'#06b6d4', blocks:[
-    { type:'sense_key',  label:'🎮 [key] 키가 눌렸는지',         params:[{name:'key',type:'keysel',default:'오른쪽'}] },
-    { type:'sense_edge', label:'🟦 화면 끝에 닿았는지',          params:[] },
+  { id:'control',   label:'제어',   color:'#FFAB19', dark:'#CF8B17', blocks:[
+    { type:'control_wait',    label:'[n] 초 기다리기',             params:[{name:'n',type:'num',default:'1'}] },
+    { type:'control_repeat',  label:'[n] 번 반복하기',             params:[{name:'n',type:'num',default:'10'}], hasChildren:true },
+    { type:'control_forever', label:'계속 반복하기',               params:[], hasChildren:true, isCap:true },
+    { type:'control_if',      label:'만약 [cond] 라면',            params:[{name:'cond',type:'cond',default:'right_key'}], hasChildren:true },
+    { type:'control_ifelse',  label:'만약 [cond] 라면/아니면',     params:[{name:'cond',type:'cond',default:'right_key'}], hasChildren:true, hasElse:true },
+    { type:'control_stop',    label:'[which] 멈추기',              params:[{name:'which',type:'stopsel',default:'all'}], isCap:true },
   ]},
-  { id:'sound',    label:'소리',    color:'#10b981', blocks:[
-    { type:'sound_beep', label:'🔊 삑 소리 내기',                params:[] },
+  { id:'sensing',   label:'감지',   color:'#5CB1D6', dark:'#47A8D1', blocks:[
+    { type:'sensing_keypressed', label:'[key] 키 눌렸는가?',      params:[{name:'key',type:'keysel',default:'오른쪽'}] },
+    { type:'sensing_mousedown',  label:'마우스 클릭했는가?',       params:[] },
+    { type:'sensing_touchedge',  label:'벽에 닿았는가?',          params:[] },
+    { type:'sense_key',          label:'[key] 키 눌렸는가? (구)', params:[{name:'key',type:'keysel',default:'오른쪽'}] },
+    { type:'sense_edge',         label:'화면 끝에 닿았는가? (구)', params:[] },
   ]},
-  { id:'variable', label:'변수',    color:'#ef4444', blocks:[
-    { type:'var_set',    label:'📊 변수 [name] 을 [val] 로',     params:[{name:'name',type:'text',default:'점수'},{name:'val',type:'num',default:'0'}] },
-    { type:'var_change', label:'📈 변수 [name] 을 [n] 만큼',     params:[{name:'name',type:'text',default:'점수'},{name:'n',type:'num',default:'1'}] },
-    { type:'var_show',   label:'👁 변수 [name] 보이기',          params:[{name:'name',type:'text',default:'점수'}] },
+  { id:'operators', label:'연산',   color:'#59C059', dark:'#46B946', blocks:[
+    { type:'op_add',    label:'[a] + [b]',                        params:[{name:'a',type:'num',default:'0'},{name:'b',type:'num',default:'0'}] },
+    { type:'op_sub',    label:'[a] - [b]',                        params:[{name:'a',type:'num',default:'0'},{name:'b',type:'num',default:'0'}] },
+    { type:'op_mul',    label:'[a] x [b]',                        params:[{name:'a',type:'num',default:'1'},{name:'b',type:'num',default:'1'}] },
+    { type:'op_div',    label:'[a] / [b]',                        params:[{name:'a',type:'num',default:'1'},{name:'b',type:'num',default:'1'}] },
+    { type:'op_random', label:'[a] ~ [b] 무작위 수',              params:[{name:'a',type:'num',default:'1'},{name:'b',type:'num',default:'10'}] },
+    { type:'op_lt',     label:'[a] < [b]',                        params:[{name:'a',type:'num',default:'0'},{name:'b',type:'num',default:'0'}] },
+    { type:'op_gt',     label:'[a] > [b]',                        params:[{name:'a',type:'num',default:'0'},{name:'b',type:'num',default:'0'}] },
+    { type:'op_eq',     label:'[a] = [b]',                        params:[{name:'a',type:'num',default:'0'},{name:'b',type:'num',default:'0'}] },
+    { type:'op_join',   label:'[a] 과 [b] 합치기',               params:[{name:'a',type:'text',default:'안녕'},{name:'b',type:'text',default:'세상'}] },
+  ]},
+  { id:'variables', label:'변수',   color:'#FF8C1A', dark:'#DB6E00', blocks:[
+    { type:'var_set',    label:'[name] 을 [val] 로 정하기',       params:[{name:'name',type:'text',default:'점수'},{name:'val',type:'num',default:'0'}] },
+    { type:'var_change', label:'[name] 을 [n] 만큼 바꾸기',       params:[{name:'name',type:'text',default:'점수'},{name:'n',type:'num',default:'1'}] },
+    { type:'var_show',   label:'[name] 변수 보이기',               params:[{name:'name',type:'text',default:'점수'}] },
+    { type:'var_hide',   label:'[name] 변수 숨기기',               params:[{name:'name',type:'text',default:'점수'}] },
   ]},
 ];
 
+// backward-compat alias
+const BC_CATS = SCRATCH_CATS;
+
 const KEY_MAP = { '오른쪽':'ArrowRight','왼쪽':'ArrowLeft','위':'ArrowUp','아래':'ArrowDown','스페이스':' ','A':'a','S':'s','D':'d','W':'w' };
-const COND_MAP = { right_key:'오른쪽 키',left_key:'왼쪽 키',up_key:'위 키',down_key:'아래 키',space_key:'스페이스',edge:'벽에 닿음' };
+const COND_MAP = { right_key:'오른쪽 키',left_key:'왼쪽 키',up_key:'위 키',down_key:'아래 키',space_key:'스페이스',a_key:'A 키',s_key:'S 키',d_key:'D 키',w_key:'W 키',edge:'벽에 닿음',mouse_down:'마우스 클릭' };
 
 let bcScript = [];
-let bcSprite  = { x:160, y:120, w:40, h:40, color:'#3b82f6', shape:'rect', visible:true, velX:0, velY:0, label:'' };
+let bcSprite  = { x:240, y:180, w:40, h:40, color:'#3b82f6', shape:'emoji', emoji:'🐱', visible:true, velX:0, velY:0, label:'', dir:90, say:null, baseSize:40 };
 let bcBgColor = '#87ceeb';
 let bcRuntime = null;
 let bcVars = {}, bcShownVars = new Set();
 let _bcIdCounter = 0;
+let bcCurrentCat = 'motion';
+let _bcBroadcastBus = {};
+let _bcVolume = 1.0;
 const bcId = () => 'blk' + (++_bcIdCounter);
 
-function bcInitPalette() {
-  const el = $('bcPalette');
-  if (!el) return;
-  el.innerHTML = BC_CATS.map(cat => `
-    <div>
-      <div class="bc-cat-header" onclick="bcToggleCat('${cat.id}')">
-        <div class="bc-cat-dot" style="background:${cat.color}"></div>
-        <span>${cat.label}</span>
-        <i class="fa-solid fa-chevron-right" id="bcCatArrow-${cat.id}" style="font-size:10px;margin-left:auto;color:var(--text-3);transition:transform .2s"></i>
-      </div>
-      <div class="bc-cat-blocks" id="bcCat-${cat.id}">
-        ${cat.blocks.map(b => `<button class="bc-block-item" onclick="bcAddBlock('${b.type}')">
-          <span class="bc-block-pill" style="background:${cat.color}">${b.label.replace(/\[[^\]]+\]/g,'(값)')}</span>
-        </button>`).join('')}
-      </div>
-    </div>`).join('');
+// ---- Scratch-style editor init ----
+
+function scInitEditor() {
+  // Build category tabs
+  const catsEl = $('scratchCats');
+  if (catsEl) {
+    catsEl.innerHTML = SCRATCH_CATS.map(cat => `
+      <div class="scratch-cat-item${cat.id===bcCurrentCat?' active':''}" id="scCatTab-${cat.id}"
+           style="${cat.id===bcCurrentCat?'border-left-color:'+cat.color+';':''}"
+           onclick="scShowCat('${cat.id}')">
+        <div class="scratch-cat-dot" style="background:${cat.color}"></div>
+        <div class="scratch-cat-label">${cat.label}</div>
+      </div>`).join('');
+  }
+  scShowCat(bcCurrentCat);
 }
 
-function bcToggleCat(id) {
-  const el = $('bcCat-'+id), arrow = $('bcCatArrow-'+id);
-  el.classList.toggle('open');
-  if (arrow) arrow.style.transform = el.classList.contains('open') ? 'rotate(90deg)' : '';
+function scShowCat(catId) {
+  bcCurrentCat = catId;
+  const cat = SCRATCH_CATS.find(c => c.id === catId);
+  if (!cat) return;
+
+  // Update tab active state
+  SCRATCH_CATS.forEach(c => {
+    const tab = $('scCatTab-'+c.id);
+    if (!tab) return;
+    if (c.id === catId) {
+      tab.classList.add('active');
+      tab.style.borderLeftColor = c.color;
+    } else {
+      tab.classList.remove('active');
+      tab.style.borderLeftColor = 'transparent';
+    }
+  });
+
+  // Build palette
+  const pal = $('scratchPal');
+  if (!pal) return;
+  pal.innerHTML = `<div class="scratch-pal-title" style="color:${cat.color}">${cat.label}</div>`;
+  cat.blocks.forEach(b => {
+    const btn = document.createElement('button');
+    btn.className = 'sc-blk' + (b.isHat ? ' sc-blk-hat' : '');
+    btn.style.background = cat.color;
+    // Render label with inline param previews
+    btn.innerHTML = scRenderPalLabel(b, cat.color);
+    btn.onclick = () => bcAddBlock(b.type);
+    pal.appendChild(btn);
+  });
 }
 
-function bcAddBlock(type, parentId) {
-  const cat = BC_CATS.find(c => c.blocks.some(b => b.type===type));
+function scRenderPalLabel(def, color) {
+  return def.label.replace(/\[[^\]]+\]/g, m => {
+    const pname = m.slice(1,-1);
+    const pDef = def.params.find(p => p.name === pname);
+    if (!pDef) return m;
+    if (pDef.type === 'color') return `<span style="display:inline-block;width:16px;height:12px;background:${pDef.default};border-radius:2px;vertical-align:middle;border:1px solid rgba(255,255,255,.4)"></span>`;
+    if (pDef.type === 'keysel') return `<span style="background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.4);border-radius:4px;padding:0 4px;font-size:10px">${pDef.default}</span>`;
+    if (pDef.type === 'cond') return `<span style="background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.4);border-radius:4px;padding:0 4px;font-size:10px">${COND_MAP[pDef.default]||pDef.default}</span>`;
+    if (pDef.type === 'stopsel') return `<span style="background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.4);border-radius:4px;padding:0 4px;font-size:10px">모두</span>`;
+    return `<span style="background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.4);border-radius:4px;padding:0 4px;font-size:10px">${pDef.default}</span>`;
+  });
+}
+
+// ---- Block management ----
+
+function bcAddBlock(type, parentId, toElse) {
+  const cat = SCRATCH_CATS.find(c => c.blocks.some(b => b.type===type));
   const def = cat?.blocks.find(b => b.type===type);
   if (!def) return;
   const params = {};
   def.params.forEach(p => params[p.name] = p.default);
-  const block = { id:bcId(), type, params, children: def.hasChildren ? [] : undefined };
+  const block = {
+    id: bcId(), type, params,
+    children: def.hasChildren ? [] : undefined,
+    elseChildren: def.hasElse ? [] : undefined
+  };
   if (parentId) {
     const parent = bcFindBlock(bcScript, parentId);
-    if (parent?.children) parent.children.push(block);
+    if (parent) {
+      if (toElse && parent.elseChildren) parent.elseChildren.push(block);
+      else if (parent.children) parent.children.push(block);
+    }
   } else {
     bcScript.push(block);
   }
@@ -3832,6 +3920,7 @@ function bcFindBlock(blocks, id) {
   for (const b of blocks) {
     if (b.id===id) return b;
     if (b.children) { const f = bcFindBlock(b.children, id); if (f) return f; }
+    if (b.elseChildren) { const f = bcFindBlock(b.elseChildren, id); if (f) return f; }
   }
   return null;
 }
@@ -3840,7 +3929,10 @@ function bcDeleteBlock(id) {
   function remove(arr) {
     const i = arr.findIndex(b => b.id===id);
     if (i!==-1) { arr.splice(i,1); return true; }
-    for (const b of arr) if (b.children && remove(b.children)) return true;
+    for (const b of arr) {
+      if (b.children && remove(b.children)) return true;
+      if (b.elseChildren && remove(b.elseChildren)) return true;
+    }
     return false;
   }
   remove(bcScript); bcRenderScript();
@@ -3850,7 +3942,10 @@ function bcMoveBlock(id, dir) {
   function move(arr) {
     const i = arr.findIndex(b => b.id===id);
     if (i!==-1) { const j=i+dir; if(j>=0&&j<arr.length){[arr[i],arr[j]]=[arr[j],arr[i]];return true;} return false; }
-    for (const b of arr) if (b.children && move(b.children)) return true;
+    for (const b of arr) {
+      if (b.children && move(b.children)) return true;
+      if (b.elseChildren && move(b.elseChildren)) return true;
+    }
     return false;
   }
   move(bcScript); bcRenderScript();
@@ -3861,32 +3956,39 @@ function bcClearScript() {
   bcScript = []; bcRenderScript();
 }
 
+// ---- Script rendering ----
+
 function bcRenderScript() {
   const area = $('bcScriptArea');
   if (!area) return;
-  if (bcScript.length===0) { area.innerHTML='<div class="bc-empty-hint">← 왼쪽에서 블록을 클릭해 추가하세요</div>'; return; }
+  if (bcScript.length===0) {
+    area.innerHTML='<div class="scratch-ws-empty">← 왼쪽 팔레트에서 블록을 클릭하세요</div>';
+    if (!bcRuntime) bcDrawPreview();
+    return;
+  }
   area.innerHTML = '';
-  bcScript.forEach(b => area.appendChild(bcRenderBlock(b, true)));
+  const grp = document.createElement('div');
+  grp.className = 'sc-ws-group';
+  bcScript.forEach(b => grp.appendChild(bcRenderBlock(b, true)));
+  area.appendChild(grp);
   if (!bcRuntime) bcDrawPreview();
 }
 
 function bcRenderBlock(block, isTop) {
-  const cat = BC_CATS.find(c => c.blocks.some(b => b.type===block.type));
+  const cat = SCRATCH_CATS.find(c => c.blocks.some(b => b.type===block.type));
   const def  = cat?.blocks.find(b => b.type===block.type);
   if (!def) return document.createTextNode('');
   const color = cat.color;
+  const dark  = cat.dark || color;
 
   const wrap = document.createElement('div');
-  wrap.className = 'bc-script-block';
-  wrap.style.borderColor = color+'44';
+  wrap.className = 'sc-ws-block' + (def.isHat ? ' sc-ws-hat' : '');
+  wrap.style.background = color;
 
-  const header = document.createElement('div');
-  header.className = 'bc-script-block-header';
-  header.style.background = color;
+  const row = document.createElement('div');
+  row.className = 'sc-ws-header-row';
 
-  const labelEl = document.createElement('div');
-  labelEl.className = 'bc-script-block-label';
-
+  // Label with inline param inputs
   def.label.split(/(\[[^\]]+\])/).forEach(part => {
     const match = part.match(/^\[(\w+)\]$/);
     if (match) {
@@ -3898,74 +4000,116 @@ function bcRenderBlock(block, isTop) {
         inp.type='color'; inp.value=block.params[pname]||pDef.default;
         inp.style.cssText='width:28px;height:22px;border:none;background:transparent;cursor:pointer;border-radius:3px;padding:0';
         inp.addEventListener('change', e => { block.params[pname]=e.target.value; bcDrawPreview(); });
-        labelEl.appendChild(inp);
-      } else if (pDef.type==='keysel'||pDef.type==='cond') {
-        const opts = pDef.type==='keysel' ? ['오른쪽','왼쪽','위','아래','스페이스','A','S','D','W'] : Object.keys(COND_MAP);
+        row.appendChild(inp);
+      } else if (pDef.type==='keysel') {
+        const opts = ['오른쪽','왼쪽','위','아래','스페이스','A','S','D','W'];
         const sel = document.createElement('select');
-        sel.style.cssText='background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.4);color:#fff;font-size:11px;border-radius:4px;padding:1px 3px';
+        sel.className='sc-ws-param';
         opts.forEach(k => {
-          const o=document.createElement('option'); o.value=k;
-          o.textContent = pDef.type==='cond' ? COND_MAP[k]||k : k;
+          const o=document.createElement('option'); o.value=k; o.textContent=k;
           if((block.params[pname]||pDef.default)===k) o.selected=true;
           sel.appendChild(o);
         });
         sel.addEventListener('change', e => block.params[pname]=e.target.value);
-        labelEl.appendChild(sel);
+        row.appendChild(sel);
+      } else if (pDef.type==='cond') {
+        const sel = document.createElement('select');
+        sel.className='sc-ws-param';
+        Object.keys(COND_MAP).forEach(k => {
+          const o=document.createElement('option'); o.value=k; o.textContent=COND_MAP[k];
+          if((block.params[pname]||pDef.default)===k) o.selected=true;
+          sel.appendChild(o);
+        });
+        sel.addEventListener('change', e => block.params[pname]=e.target.value);
+        row.appendChild(sel);
+      } else if (pDef.type==='stopsel') {
+        const sel = document.createElement('select');
+        sel.className='sc-ws-param';
+        [['all','모두'],['this','이 스크립트'],['other','다른 스크립트']].forEach(([v,t]) => {
+          const o=document.createElement('option'); o.value=v; o.textContent=t;
+          if((block.params[pname]||pDef.default)===v) o.selected=true;
+          sel.appendChild(o);
+        });
+        sel.addEventListener('change', e => block.params[pname]=e.target.value);
+        row.appendChild(sel);
       } else {
         const inp = document.createElement('input');
-        inp.className='bc-script-param';
+        inp.className='sc-ws-param';
         inp.value=block.params[pname]!==undefined ? block.params[pname] : (pDef.default||'');
-        inp.style.cssText='width:42px;min-width:28px;';
+        inp.style.width= pDef.type==='text' ? '60px' : '44px';
         inp.addEventListener('input', e => { block.params[pname]=e.target.value; bcDrawPreview(); });
-        labelEl.appendChild(inp);
+        row.appendChild(inp);
       }
     } else if (part) {
-      const s=document.createElement('span'); s.textContent=part; labelEl.appendChild(s);
+      const s=document.createElement('span'); s.textContent=part; row.appendChild(s);
     }
   });
 
-  header.appendChild(labelEl);
+  // Buttons
   const btns = document.createElement('div');
-  btns.className='bc-script-block-btns';
+  btns.className='sc-ws-btns';
   if (isTop) {
     ['▲','▼'].forEach((t,i) => {
-      const b=document.createElement('button'); b.className='bc-script-block-btn'; b.textContent=t;
+      const b=document.createElement('button'); b.className='sc-ws-btn'; b.textContent=t;
       b.onclick=()=>bcMoveBlock(block.id, i===0?-1:1); btns.appendChild(b);
     });
   }
-  const del=document.createElement('button'); del.className='bc-script-block-btn'; del.textContent='✕';
+  const del=document.createElement('button'); del.className='sc-ws-btn'; del.textContent='✕';
   del.onclick=()=>bcDeleteBlock(block.id); btns.appendChild(del);
-  header.appendChild(btns);
-  wrap.appendChild(header);
+  row.appendChild(btns);
+  wrap.appendChild(row);
 
+  // Children
   if (block.children!==undefined) {
     const childArea=document.createElement('div');
-    childArea.className='bc-children'; childArea.style.borderLeftColor=color+'66';
+    childArea.className='sc-ws-children';
     block.children.forEach(ch => childArea.appendChild(bcRenderBlock(ch, false)));
+    childArea.appendChild(scMakeAddSel(block.id, false, color));
+    wrap.appendChild(childArea);
 
-    const addSel=document.createElement('select');
-    addSel.style.cssText='font-size:10px;background:rgba(0,0,0,.05);border:1px dashed var(--border);border-radius:4px;margin:2px 0 4px;padding:2px 4px;width:100%';
-    const ph=document.createElement('option'); ph.value=''; ph.textContent='+ 블록 추가...'; addSel.appendChild(ph);
-    BC_CATS.forEach(cat => {
-      const grp=document.createElement('optgroup'); grp.label=cat.label;
-      cat.blocks.filter(b=>!b.type.startsWith('event_')).forEach(b=>{
-        const o=document.createElement('option'); o.value=b.type;
-        o.textContent=b.label.replace(/\[[^\]]+\]/g,'(값)'); grp.appendChild(o);
-      }); addSel.appendChild(grp);
-    });
-    addSel.addEventListener('change', e => { if(e.target.value){bcAddBlock(e.target.value,block.id);e.target.value='';} });
-    childArea.appendChild(addSel);
+    // else branch
+    if (block.elseChildren !== undefined) {
+      const elseLabel = document.createElement('div');
+      elseLabel.className='sc-ws-else-label'; elseLabel.style.background=dark;
+      elseLabel.textContent='아니면';
+      wrap.appendChild(elseLabel);
+      const elseArea = document.createElement('div');
+      elseArea.className='sc-ws-else';
+      block.elseChildren.forEach(ch => elseArea.appendChild(bcRenderBlock(ch, false)));
+      elseArea.appendChild(scMakeAddSel(block.id, true, color));
+      wrap.appendChild(elseArea);
+    }
 
-    const endLabel=document.createElement('div');
-    endLabel.className='bc-block-end'; endLabel.style.background=color+'88'; endLabel.textContent='끝';
-    wrap.appendChild(childArea); wrap.appendChild(endLabel);
+    const endDiv=document.createElement('div');
+    endDiv.className='sc-ws-end'; endDiv.style.background=dark;
+    endDiv.textContent='끝';
+    wrap.appendChild(endDiv);
   }
   return wrap;
 }
 
+function scMakeAddSel(parentId, toElse, color) {
+  const addSel=document.createElement('select');
+  addSel.className='sc-ws-add-sel';
+  const ph=document.createElement('option'); ph.value=''; ph.textContent='+ 블록 추가...'; addSel.appendChild(ph);
+  SCRATCH_CATS.forEach(cat => {
+    const grp=document.createElement('optgroup'); grp.label=cat.label;
+    cat.blocks.filter(b=>!b.isHat).forEach(b=>{
+      const o=document.createElement('option'); o.value=b.type;
+      o.textContent=b.label.replace(/\[[^\]]+\]/g,'(값)'); grp.appendChild(o);
+    }); addSel.appendChild(grp);
+  });
+  addSel.addEventListener('change', e => {
+    if(e.target.value){ bcAddBlock(e.target.value, parentId, toElse); e.target.value=''; }
+  });
+  return addSel;
+}
+
+// ---- Open / Close ----
+
 function openBlockCoder() {
   $('bcModal').classList.remove('hidden');
-  bcInitPalette();
+  scInitEditor();
   bcRenderScript();
   bcDrawPreview();
 }
@@ -3975,6 +4119,8 @@ function closeBlockCoder() {
   $('bcModal').classList.add('hidden');
 }
 
+// ---- Background ----
+
 function bcSetBg(color) {
   bcBgColor = color;
   const el = $('bcBgColor');
@@ -3982,14 +4128,24 @@ function bcSetBg(color) {
   bcDrawPreview();
 }
 
+// ---- Sprite chars ----
+
 const BC_CHARS = {
-  person:   { shape:'emoji', emoji:'🧍', w:36, h:36 },
-  cat:      { shape:'emoji', emoji:'🐱', w:36, h:36 },
-  rocket:   { shape:'emoji', emoji:'🚀', w:36, h:36 },
-  star:     { shape:'emoji', emoji:'⭐', w:36, h:36 },
-  circle:   { shape:'circle', w:36, h:36 },
-  rect:     { shape:'rect',   w:36, h:36 },
-  triangle: { shape:'triangle', w:36, h:36 },
+  cat:    { shape:'emoji', emoji:'🐱' },
+  dog:    { shape:'emoji', emoji:'🐶' },
+  duck:   { shape:'emoji', emoji:'🦆' },
+  bear:   { shape:'emoji', emoji:'🐻' },
+  bunny:  { shape:'emoji', emoji:'🐰' },
+  tiger:  { shape:'emoji', emoji:'🐯' },
+  person: { shape:'emoji', emoji:'🧍' },
+  robot:  { shape:'emoji', emoji:'🤖' },
+  rocket: { shape:'emoji', emoji:'🚀' },
+  star:   { shape:'emoji', emoji:'⭐' },
+  ball:   { shape:'emoji', emoji:'🔴' },
+  arrow:  { shape:'emoji', emoji:'➤' },
+  circle:   { shape:'circle' },
+  rect:     { shape:'rect' },
+  triangle: { shape:'triangle' },
 };
 
 function bcSetChar(charKey) {
@@ -3997,76 +4153,176 @@ function bcSetChar(charKey) {
   if (!ch) return;
   bcSprite.shape = ch.shape;
   bcSprite.emoji = ch.emoji || null;
-  document.querySelectorAll('.bc-char-btn').forEach(b => b.classList.remove('active'));
-  const btn = [...document.querySelectorAll('.bc-char-btn')].find(b => b.title === { person:'사람',cat:'고양이',rocket:'로켓',star:'별',circle:'원',rect:'사각형',triangle:'삼각형' }[charKey]);
-  if (btn) btn.classList.add('active');
+  // Update preview emoji in panel
+  const prev = $('scratchSpritePreviewEmoji');
+  if (prev) prev.textContent = ch.emoji || '?';
+  // Update active state
+  document.querySelectorAll('.scratch-char').forEach(b => {
+    b.classList.toggle('active', b.dataset.char === charKey);
+  });
   bcDrawPreview();
 }
 
 function bcUpdateSprite() {
-  bcSprite.color = $('bcSpriteColor')?.value||'#3b82f6';
-  bcSprite.w=bcSprite.h=parseInt($('bcSpriteSize')?.value||40);
-  bcSprite.label = $('bcSpriteLabel')?.value||'';
-  bcBgColor = $('bcBgColor')?.value||'#87ceeb';
+  bcSprite.color   = $('bcSpriteColor')?.value || '#3b82f6';
+  const sizeEl = $('bcSpriteSize');
+  if (sizeEl) { bcSprite.w = bcSprite.h = Math.max(5, parseInt(sizeEl.value)||40); bcSprite.baseSize = bcSprite.w; }
+  bcSprite.label   = $('bcSpriteLabel')?.value || '';
+  bcSprite.dir     = parseFloat($('bcSpriteDir')?.value || 90);
+  bcSprite.visible = $('bcSpriteVisible')?.checked !== false;
   bcDrawPreview();
 }
 
+window.bcMoveSprite = function() {
+  bcSprite.x = parseInt($('bcSpritePropX')?.value || 240);
+  bcSprite.y = parseInt($('bcSpritePropY')?.value || 180);
+  bcDrawPreview();
+};
+
+window.selectSprite = function() {};
+
+// ---- Drawing ----
+
 function bcDrawSprite(ctx, sp) {
   if (!sp.visible) return;
-  const {x,y,w,h,shape,color,label,emoji}=sp;
+  const {x,y,w,h,shape,color,label,emoji,dir} = sp;
+  ctx.save();
+  ctx.translate(x, y);
+  const angle = dir !== undefined ? (dir - 90) * Math.PI / 180 : 0;
+  ctx.rotate(angle);
   if (shape==='emoji' && emoji) {
     ctx.font = `${w}px serif`;
     ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText(emoji, x, y);
-    ctx.textBaseline='alphabetic';
+    ctx.fillText(emoji, 0, 0);
   } else {
-    ctx.fillStyle=color;
-    if(shape==='circle'){ctx.beginPath();ctx.arc(x,y,w/2,0,Math.PI*2);ctx.fill();}
-    else if(shape==='triangle'){ctx.beginPath();ctx.moveTo(x,y-h/2);ctx.lineTo(x+w/2,y+h/2);ctx.lineTo(x-w/2,y+h/2);ctx.closePath();ctx.fill();}
-    else{ctx.fillRect(x-w/2,y-h/2,w,h);}
+    ctx.fillStyle = color;
+    if (shape==='circle') { ctx.beginPath(); ctx.arc(0,0,w/2,0,Math.PI*2); ctx.fill(); }
+    else if (shape==='triangle') { ctx.beginPath(); ctx.moveTo(0,-h/2); ctx.lineTo(w/2,h/2); ctx.lineTo(-w/2,h/2); ctx.closePath(); ctx.fill(); }
+    else { ctx.fillRect(-w/2,-h/2,w,h); }
   }
-  if(label){ctx.fillStyle='#222';ctx.font='bold 11px sans-serif';ctx.textAlign='center';ctx.fillText(label,x,y+w/2+12);}
+  ctx.restore();
+  if (label) {
+    ctx.fillStyle='#222'; ctx.font='bold 11px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+    ctx.fillText(label, x, y+w/2+12);
+  }
 }
 
 function bcDrawPreview() {
   const canvas=$('bcCanvas'); if(!canvas) return;
   const ctx=canvas.getContext('2d');
-  ctx.fillStyle=bcBgColor; ctx.fillRect(0,0,canvas.width,canvas.height);
+  const W=canvas.width, H=canvas.height;
+  ctx.fillStyle=bcBgColor; ctx.fillRect(0,0,W,H);
   bcDrawSprite(ctx, bcSprite);
+  // Speech bubble
+  if (bcSprite.say) {
+    const sp=bcSprite;
+    const bx=sp.x+sp.w/2+5, by=sp.y-sp.w/2-10;
+    const text=sp.say.text||'';
+    ctx.font='bold 13px sans-serif';
+    const tw=ctx.measureText(text).width;
+    const bw=tw+16, bh=28;
+    const rx=Math.min(bx, W-bw-4), ry=Math.max(4, by-bh);
+    ctx.fillStyle='white'; ctx.strokeStyle='#333'; ctx.lineWidth=1.5;
+    ctx.beginPath();
+    if (ctx.roundRect) { ctx.roundRect(rx, ry, bw, bh, 8); } else {
+      ctx.rect(rx, ry, bw, bh);
+    }
+    ctx.fill(); ctx.stroke();
+    if (sp.say.style==='think') {
+      [0,1,2].forEach(i => {
+        ctx.beginPath(); ctx.arc(sp.x+sp.w/2+4+i*6, sp.y-sp.w/2-4-i*3, 2+i, 0, Math.PI*2);
+        ctx.fillStyle='white'; ctx.fill(); ctx.stroke();
+      });
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(sp.x+sp.w/2, sp.y-sp.w/2-2);
+      ctx.lineTo(rx+12, ry+bh);
+      ctx.lineTo(rx+20, ry+bh);
+      ctx.fillStyle='white'; ctx.fill(); ctx.stroke();
+    }
+    ctx.fillStyle='#333'; ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillText(text, rx+8, ry+bh/2);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+  }
+  // Shown variables
   let varY=14;
   bcShownVars.forEach(name=>{
-    ctx.fillStyle='rgba(0,0,0,.65)';ctx.fillRect(4,varY-11,100,16);
-    ctx.fillStyle='#fff';ctx.font='11px sans-serif';ctx.textAlign='left';
-    ctx.fillText(`${name}: ${bcVars[name]??0}`,8,varY);varY+=19;
+    ctx.fillStyle='rgba(0,0,0,.65)'; ctx.fillRect(4,varY-11,110,16);
+    ctx.fillStyle='#fff'; ctx.font='11px sans-serif'; ctx.textAlign='left';
+    ctx.fillText(`${name}: ${bcVars[name]??0}`, 8, varY); varY+=19;
   });
 }
 
+// ---- Runtime ----
+
 function bcRun() {
   if (bcRuntime) bcStop();
-  bcVars={}; bcShownVars=new Set();
-  bcSprite.x=160;bcSprite.y=120;bcSprite.velX=0;bcSprite.velY=0;bcSprite.visible=true;
-  const canvas=$('bcCanvas'), W=canvas?canvas.width:320, H=canvas?canvas.height:240;
-  const keyState={};
-  const onKD=e=>keyState[e.key]=true, onKU=e=>keyState[e.key]=false;
+  bcVars={}; bcShownVars=new Set(); _bcBroadcastBus={};
+  const sp=bcSprite;
+  sp.x=240; sp.y=180; sp.velX=0; sp.velY=0; sp.visible=true; sp.say=null;
+  sp.dir=parseFloat($('bcSpriteDir')?.value||90);
+  const canvas=$('bcCanvas'), W=canvas?canvas.width:480, H=canvas?canvas.height:360;
+  const keyState={}, mouseState={down:false};
+  const onKD=e=>{keyState[e.key]=true;};
+  const onKU=e=>{keyState[e.key]=false;};
+  const onMD=()=>{mouseState.down=true;};
+  const onMU=()=>{mouseState.down=false;};
   document.addEventListener('keydown',onKD); document.addEventListener('keyup',onKU);
+  document.addEventListener('mousedown',onMD); document.addEventListener('mouseup',onMU);
   let running=true;
 
+  // Canvas click for event_click
+  let _canvasClickCb = null;
+  if (canvas) {
+    _canvasClickCb = () => {
+      const clickBlocks=bcScript.filter(b=>b.type==='event_click');
+      clickBlocks.forEach(b=>exec(b.children||[]));
+    };
+    canvas.addEventListener('click', _canvasClickCb);
+  }
+
   function evalCond(cond){
-    const m={right_key:'ArrowRight',left_key:'ArrowLeft',up_key:'ArrowUp',down_key:'ArrowDown',space_key:' '};
-    if(cond==='edge'){const sp=bcSprite;return sp.x<=sp.w/2||sp.x>=W-sp.w/2||sp.y<=sp.h/2||sp.y>=H-sp.h/2;}
+    const m={right_key:'ArrowRight',left_key:'ArrowLeft',up_key:'ArrowUp',down_key:'ArrowDown',space_key:' ',a_key:'a',s_key:'s',d_key:'d',w_key:'w'};
+    if(cond==='edge'||cond==='sensing_touchedge'){return sp.x<=sp.w/2||sp.x>=W-sp.w/2||sp.y<=sp.h/2||sp.y>=H-sp.h/2;}
+    if(cond==='mouse_down'){return mouseState.down;}
     return !!(keyState[m[cond]]||keyState[KEY_MAP[cond]]||keyState[cond]);
   }
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
+  function playNote(note, duration) {
+    try {
+      const ac=new AudioContext();
+      const gain=ac.createGain(); gain.gain.value=_bcVolume;
+      const o=ac.createOscillator();
+      const freq=440*Math.pow(2,(note-69)/12);
+      o.frequency.value=freq; o.type='sine';
+      o.connect(gain); gain.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime+duration);
+    } catch(e){}
+  }
+
   async function exec(blocks){
     for(const b of blocks){
       if(!running) return;
-      const p=b.params,sp=bcSprite;
+      const p=b.params;
       switch(b.type){
+        // Motion
+        case 'motion_move': { const rad=(sp.dir-90)*Math.PI/180; sp.x+=Math.cos(rad)*(parseFloat(p.n)||0); sp.y+=Math.sin(rad)*(parseFloat(p.n)||0); break; }
+        case 'motion_turnr': sp.dir=(sp.dir+(parseFloat(p.n)||0))%360; break;
+        case 'motion_turnl': sp.dir=(sp.dir-(parseFloat(p.n)||0)+360)%360; break;
+        case 'motion_goto': sp.x=parseFloat(p.x)||0; sp.y=parseFloat(p.y)||0; break;
+        case 'motion_glide': {
+          const dur=(parseFloat(p.t)||1)*1000, tx=parseFloat(p.x)||0, ty=parseFloat(p.y)||0;
+          const sx=sp.x, sy=sp.y, t0=Date.now();
+          while(running){ const prog=Math.min(1,(Date.now()-t0)/dur); sp.x=sx+(tx-sx)*prog; sp.y=sy+(ty-sy)*prog; if(prog>=1)break; await sleep(16); }
+          break;
+        }
         case 'motion_x': sp.x=Math.max(sp.w/2,Math.min(W-sp.w/2,sp.x+(parseFloat(p.n)||0))); break;
         case 'motion_y': sp.y=Math.max(sp.h/2,Math.min(H-sp.h/2,sp.y+(parseFloat(p.n)||0))); break;
         case 'motion_setx': sp.x=parseFloat(p.x)||0; break;
         case 'motion_sety': sp.y=parseFloat(p.y)||0; break;
+        case 'motion_dir': sp.dir=parseFloat(p.deg)||90; break;
         case 'motion_bounce':
           if(sp.x-sp.w/2<=0||sp.x+sp.w/2>=W)sp.velX=-sp.velX;
           if(sp.y-sp.h/2<=0||sp.y+sp.h/2>=H)sp.velY=-sp.velY; break;
@@ -4075,23 +4331,71 @@ function bcRun() {
         case 'motion_applyvel':
           sp.x=Math.max(sp.w/2,Math.min(W-sp.w/2,sp.x+sp.velX));
           sp.y=Math.max(sp.h/2,Math.min(H-sp.h/2,sp.y+sp.velY)); break;
+        // Looks
+        case 'looks_say': sp.say={text:p.text||'',style:'say'}; await sleep((parseFloat(p.t)||2)*1000); sp.say=null; break;
+        case 'looks_sayperm': sp.say={text:p.text||'',style:'say'}; break;
+        case 'looks_think': sp.say={text:p.text||'',style:'think'}; await sleep((parseFloat(p.t)||2)*1000); sp.say=null; break;
+        case 'looks_stopsay': sp.say=null; break;
+        case 'looks_size': sp.w=sp.h=Math.max(5,(sp.baseSize||40)*(parseFloat(p.size)||100)/100); break;
+        case 'looks_changesize': sp.w=sp.h=Math.max(5,sp.w+(sp.baseSize||40)*(parseFloat(p.n)||0)/100); break;
         case 'looks_color': sp.color=p.color; break;
-        case 'looks_size': sp.w=sp.h=Math.max(5,parseFloat(p.size)||40); break;
         case 'looks_show': sp.visible=true; break;
         case 'looks_hide': sp.visible=false; break;
         case 'looks_label': sp.label=p.text||''; break;
+        // Sound
+        case 'sound_beep': try{const ac=new AudioContext();const o=ac.createOscillator();o.connect(ac.destination);o.start();o.stop(ac.currentTime+.1);}catch(e){} break;
+        case 'sound_note': { const note=parseInt(p.note)||60; const dur=(parseFloat(p.t)||0.5)*0.5; playNote(note,dur); await sleep(dur*1000); break; }
+        case 'sound_drum': try{const ac=new AudioContext();const o=ac.createOscillator();o.type='sawtooth';o.frequency.value=80;const g=ac.createGain();g.gain.setValueAtTime(1,ac.currentTime);g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+0.2);o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+0.2);}catch(e){} break;
+        case 'sound_vol': _bcVolume=Math.max(0,Math.min(1,(parseFloat(p.vol)||100)/100)); break;
+        // Events
+        case 'event_start': await exec(b.children||[]); break;
+        case 'event_broadcast': {
+          const msg=p.msg||'메시지1';
+          (_bcBroadcastBus[msg]||[]).forEach(fn=>fn());
+          break;
+        }
+        case 'event_receive': await exec(b.children||[]); break;
+        // Control
         case 'control_wait': await sleep((parseFloat(p.n)||1)*1000); break;
         case 'control_repeat': for(let i=0;i<(parseInt(p.n)||10)&&running;i++){await exec(b.children||[]);await sleep(16);} break;
         case 'control_forever': while(running){await exec(b.children||[]);await sleep(16);} break;
         case 'control_if': if(evalCond(p.cond))await exec(b.children||[]); break;
+        case 'control_ifelse':
+          if(evalCond(p.cond)) await exec(b.children||[]);
+          else await exec(b.elseChildren||[]);
+          break;
+        case 'control_stop': running=false; return;
+        // Sensing
+        case 'sensing_keypressed':
+        case 'sense_key': { const k=KEY_MAP[p.key||'오른쪽']||p.key; if(!keyState[k]) return; break; }
+        case 'sensing_mousedown': if(!mouseState.down) return; break;
+        case 'sensing_touchedge':
+        case 'sense_edge': if(!(sp.x<=sp.w/2||sp.x>=W-sp.w/2||sp.y<=sp.h/2||sp.y>=H-sp.h/2)) return; break;
+        // Operators (show result as say bubble briefly)
+        case 'op_add': { const r=(parseFloat(p.a)||0)+(parseFloat(p.b)||0); bcVars._result=r; sp.say={text:String(r),style:'say'}; await sleep(1000); sp.say=null; break; }
+        case 'op_sub': { const r=(parseFloat(p.a)||0)-(parseFloat(p.b)||0); bcVars._result=r; sp.say={text:String(r),style:'say'}; await sleep(1000); sp.say=null; break; }
+        case 'op_mul': { const r=(parseFloat(p.a)||0)*(parseFloat(p.b)||0); bcVars._result=r; sp.say={text:String(r),style:'say'}; await sleep(1000); sp.say=null; break; }
+        case 'op_div': { const b2=parseFloat(p.b)||1; const r=(parseFloat(p.a)||0)/b2; bcVars._result=r; sp.say={text:String(Math.round(r*1000)/1000),style:'say'}; await sleep(1000); sp.say=null; break; }
+        case 'op_random': { const a=parseFloat(p.a)||1, bv=parseFloat(p.b)||10; const r=Math.floor(Math.random()*(bv-a+1))+a; bcVars._result=r; sp.say={text:String(r),style:'say'}; await sleep(1000); sp.say=null; break; }
+        case 'op_lt': { const r=(parseFloat(p.a)||0)<(parseFloat(p.b)||0); bcVars._result=r; sp.say={text:r?'참':'거짓',style:'say'}; await sleep(1000); sp.say=null; break; }
+        case 'op_gt': { const r=(parseFloat(p.a)||0)>(parseFloat(p.b)||0); bcVars._result=r; sp.say={text:r?'참':'거짓',style:'say'}; await sleep(1000); sp.say=null; break; }
+        case 'op_eq': { const r=String(p.a||'')===String(p.b||''); bcVars._result=r; sp.say={text:r?'참':'거짓',style:'say'}; await sleep(1000); sp.say=null; break; }
+        case 'op_join': { const r=String(p.a||'')+String(p.b||''); bcVars._result=r; sp.say={text:r,style:'say'}; await sleep(1000); sp.say=null; break; }
+        // Variables
         case 'var_set': bcVars[p.name||'변수']=parseFloat(p.val)||0; break;
         case 'var_change': bcVars[p.name||'변수']=(bcVars[p.name||'변수']||0)+(parseFloat(p.n)||0); break;
         case 'var_show': bcShownVars.add(p.name||'변수'); break;
-        case 'sound_beep': try{const ac=new AudioContext();const o=ac.createOscillator();o.connect(ac.destination);o.start();o.stop(ac.currentTime+.1);}catch{} break;
-        case 'event_start': await exec(b.children||[]); break;
+        case 'var_hide': bcShownVars.delete(p.name||'변수'); break;
       }
     }
   }
+
+  // Register broadcast receivers
+  bcScript.filter(b=>b.type==='event_receive').forEach(b=>{
+    const msg=b.params.msg||'메시지1';
+    if(!_bcBroadcastBus[msg]) _bcBroadcastBus[msg]=[];
+    _bcBroadcastBus[msg].push(()=>exec(b.children||[]));
+  });
 
   let rafId;
   function loop(){if(!running)return;bcDrawPreview();rafId=requestAnimationFrame(loop);}
@@ -4101,7 +4405,16 @@ function bcRun() {
   const kbTrigger=e=>kbBlocks.forEach(b=>{const k=KEY_MAP[b.params.key||'오른쪽']||b.params.key;if(e.key===k)exec(b.children||[]);});
   document.addEventListener('keydown',kbTrigger);
 
-  bcRuntime={stop:()=>{running=false;cancelAnimationFrame(rafId);document.removeEventListener('keydown',onKD);document.removeEventListener('keyup',onKU);document.removeEventListener('keydown',kbTrigger);}};
+  bcRuntime={stop:()=>{
+    running=false;
+    cancelAnimationFrame(rafId);
+    document.removeEventListener('keydown',onKD);
+    document.removeEventListener('keyup',onKU);
+    document.removeEventListener('mousedown',onMD);
+    document.removeEventListener('mouseup',onMU);
+    document.removeEventListener('keydown',kbTrigger);
+    if(canvas&&_canvasClickCb) canvas.removeEventListener('click',_canvasClickCb);
+  }};
   if($('bcRunBtn'))$('bcRunBtn').style.display='none';
   if($('bcStopBtn'))$('bcStopBtn').style.display='';
 }
@@ -4122,9 +4435,9 @@ async function bcSubmit(){
   try{
     const res=await fetch('/api/block-games',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:USER.id,nickname:USER.nickname,title,program})});
     const data=await res.json();
-    if(data.success){showToast('제출 완료! 관리자 승인을 기다리세요 🎉','success');$('bcGameTitle').value='';}
+    if(data.success){showToast('제출 완료! 관리자 승인을 기다리세요','success');$('bcGameTitle').value='';}
     else showToast(data.error||'제출 실패','error');
-  }catch{showToast('제출 중 오류 발생','error');}
+  }catch(e){showToast('제출 중 오류 발생','error');}
 }
 
 // (switchView 확장은 원본 함수에 통합됨)
