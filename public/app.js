@@ -1382,6 +1382,7 @@ function switchView(viewName) {
   if (viewName === 'profile') loadProfileView();
   if (viewName === 'explore') loadExploreView();
   if (viewName === 'ranking') loadRankings();
+  if (viewName === 'members') loadMembers();
   closeSidebar();
 }
 
@@ -1952,3 +1953,524 @@ function formatFileSize(bytes) {
 const style = document.createElement('style');
 style.textContent = `@keyframes fadeOut { to { opacity:0; transform:scale(0.95); } }`;
 document.head.appendChild(style);
+
+// =============================================
+// 멤버 목록
+// =============================================
+let allMembers = [];
+
+socket.on('membersUpdate', (members) => {
+  allMembers = members;
+  if (state.currentView === 'members') renderMemberGrid(members);
+});
+
+async function loadMembers() {
+  try {
+    const res = await fetch('/api/members');
+    allMembers = await res.json();
+    renderMemberGrid(allMembers);
+  } catch { showToast('멤버 로딩 실패', 'error'); }
+}
+
+function renderMemberGrid(members) {
+  const grid = $('memberGrid');
+  const countEl = $('memberCount');
+  if (!grid) return;
+  const onlineIds = new Set(state.onlineUsers.map(u => u.userId));
+  if (countEl) countEl.textContent = `전체 ${members.length}명`;
+  if (members.length === 0) {
+    grid.innerHTML = `<div class="empty-feed" style="grid-column:1/-1">
+      <div class="empty-feed-icon"><i class="fa-solid fa-users"></i></div>
+      <p>아직 방문한 멤버가 없습니다</p>
+    </div>`;
+    return;
+  }
+  const sorted = [...members].sort((a, b) => {
+    const aOn = onlineIds.has(a.userId) ? 1 : 0;
+    const bOn = onlineIds.has(b.userId) ? 1 : 0;
+    return bOn - aOn || new Date(b.lastSeen) - new Date(a.lastSeen);
+  });
+  grid.innerHTML = sorted.map(m => {
+    const isOn = onlineIds.has(m.userId);
+    const ranked = getRankedUser(m.userId);
+    return `
+      <div class="member-card ${isOn ? 'online' : 'offline'}" onclick="openUserProfile('${m.userId}')">
+        ${avatarHtml(m.avatarUrl, m.color, m.nickname, 'sm')}
+        <div class="member-info">
+          <div class="member-name">${escHtml(m.nickname)}${ranked ? ` <span style="font-size:12px">${ranked.badge}</span>` : ''}</div>
+          <div class="member-status ${isOn ? 'on' : 'off'}">
+            <i class="fa-solid fa-circle" style="font-size:7px"></i>
+            ${isOn ? '온라인' : '오프라인'}
+          </div>
+          ${m.bio ? `<div class="member-bio">${escHtml(m.bio)}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// =============================================
+// 다른 유저 프로필 보기
+// =============================================
+async function openUserProfile(userId) {
+  try {
+    const res = await fetch(`/api/users/${userId}/profile`);
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    const ranked = data.rank;
+
+    setAvatarEl($('upAvatar'), data.avatarUrl, data.color, getInitials(data.nickname));
+    $('upAvatar').style.background = data.avatarUrl ? 'transparent' : data.color;
+
+    $('upNickname').textContent = data.nickname;
+    $('upNickname').style.color = ranked && ranked.rank === 1 ? '' : data.color;
+    if (ranked && ranked.rank === 1) {
+      $('upNickname').style.background = 'linear-gradient(90deg,#d97706,#f59e0b,#eab308)';
+      $('upNickname').style.webkitBackgroundClip = 'text';
+      $('upNickname').style.webkitTextFillColor = 'transparent';
+    }
+
+    $('upBadge').textContent = ranked ? ranked.badge : '';
+    $('upTitle').textContent = ranked ? ranked.title : '';
+    $('upTitle').style.display = ranked ? '' : 'none';
+
+    const onlineEl = $('upOnline');
+    onlineEl.textContent = data.isOnline ? '● 온라인' : '● 오프라인';
+    onlineEl.style.cssText = `font-size:11px;padding:2px 8px;border-radius:10px;background:${data.isOnline ? 'rgba(22,163,74,.1)' : 'rgba(0,0,0,.06)'};color:${data.isOnline ? 'var(--green)' : 'var(--text-3)'}`;
+
+    $('upBio').textContent = data.bio || '소개글이 없습니다.';
+    $('upPostCount').textContent = data.postCount || 0;
+    $('upLikeCount').textContent = data.totalLikes || 0;
+
+    const bd = data.likeBreakdown || {};
+    $('upLikeBreakdown').innerHTML = LIKE_TYPES.map(t =>
+      `<span style="font-size:12px;background:var(--bg-input);border:1px solid var(--border);border-radius:10px;padding:2px 8px">${t} ${bd[t]||0}</span>`
+    ).join('');
+
+    const recentEl = $('upRecentPosts');
+    if (data.recentPosts && data.recentPosts.length > 0) {
+      recentEl.innerHTML = `<div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-3);margin-bottom:6px">최근 게시글</div>` +
+        data.recentPosts.slice(0, 3).map(p => `
+          <div style="font-size:12px;padding:5px 0;border-bottom:1px solid var(--border);color:var(--text-2)">
+            ${escHtml(p.content?.slice(0, 50) || '(파일)')}
+            <span style="color:var(--text-4);margin-left:6px">${formatTime(p.createdAt)}</span>
+          </div>`).join('');
+    } else {
+      recentEl.innerHTML = '';
+    }
+
+    // DM 버튼
+    const dmBtn = $('upDmBtn');
+    const targetUser = state.onlineUsers.find(u => u.userId === userId);
+    if (targetUser && targetUser.socketId !== socket.id) {
+      dmBtn.style.display = '';
+      dmBtn.onclick = () => {
+        closeUserProfile();
+        openDM(targetUser.socketId, targetUser.nickname, targetUser.color);
+      };
+    } else {
+      dmBtn.style.display = 'none';
+    }
+
+    $('userProfileModal').classList.remove('hidden');
+  } catch {
+    showToast('프로필을 불러올 수 없습니다.', 'error');
+  }
+}
+
+function closeUserProfile() {
+  $('userProfileModal').classList.add('hidden');
+}
+
+// =============================================
+// 게임존
+// =============================================
+let gameState = {
+  type: null,        // 'gomoku' | 'tictactoe' | 'snake'
+  mode: null,        // 'ai' | 'multi'
+  roomId: null,
+  myTurn: false,
+  mySymbol: null,    // '⚫'/'⚪' or 'X'/'O'
+  board: null,
+  isOver: false,
+  snakeTimer: null,
+};
+
+function openGame(type) {
+  gameState.type = type;
+  gameState.mode = null;
+  gameState.roomId = null;
+  gameState.isOver = false;
+
+  const titles = { gomoku: '⚫ 오목', tictactoe: '❌ 틱택토', snake: '🐍 뱀 게임' };
+  $('gameModalTitle').textContent = titles[type];
+  $('gameModeSelect').classList.remove('hidden');
+  $('multiLobby').classList.add('hidden');
+  $('multiWaiting').classList.add('hidden');
+  $('gameBoard').classList.add('hidden');
+
+  if (type === 'snake') {
+    $('gameModeSelect').innerHTML = `
+      <div class="game-mode-btns">
+        <button class="btn btn-primary" onclick="startGame('ai')"><i class="fa-solid fa-play"></i> 시작하기</button>
+      </div>`;
+  } else {
+    $('gameModeSelect').innerHTML = `
+      <div class="game-mode-btns">
+        <button class="btn btn-primary" onclick="startGame('ai')"><i class="fa-solid fa-robot"></i> 1인용 (AI 대전)</button>
+        <button class="btn btn-outline" onclick="showMultiLobby()"><i class="fa-solid fa-user-group"></i> 2인용 (온라인)</button>
+      </div>`;
+  }
+
+  $('gameModal').classList.remove('hidden');
+  socket.emit('getGameRooms');
+}
+
+function closeGame() {
+  if (gameState.snakeTimer) { clearInterval(gameState.snakeTimer); gameState.snakeTimer = null; }
+  if (gameState.roomId) socket.emit('leaveGameRoom', { roomId: gameState.roomId });
+  $('gameModal').classList.add('hidden');
+  gameState = { type: null, mode: null, roomId: null, myTurn: false, mySymbol: null, board: null, isOver: false, snakeTimer: null };
+}
+
+function startGame(mode) {
+  gameState.mode = mode;
+  $('gameModeSelect').classList.add('hidden');
+  $('multiLobby').classList.add('hidden');
+  $('multiWaiting').classList.add('hidden');
+  $('gameBoard').classList.remove('hidden');
+
+  if (gameState.type === 'gomoku') initGomoku(mode);
+  else if (gameState.type === 'tictactoe') initTicTacToe(mode);
+  else if (gameState.type === 'snake') initSnake();
+}
+
+function restartGame() {
+  if (gameState.mode) startGame(gameState.mode);
+}
+
+// ---- 멀티 로비 ----
+function showMultiLobby() {
+  $('gameModeSelect').classList.add('hidden');
+  $('multiLobby').classList.remove('hidden');
+  refreshGameRooms();
+}
+
+function refreshGameRooms() { socket.emit('getGameRooms'); }
+
+function createMultiGame() {
+  socket.emit('createGameRoom', { gameType: gameState.type, nickname: USER.nickname });
+}
+
+function joinGameRoom(roomId) {
+  socket.emit('joinGameRoom', { roomId });
+}
+
+function leaveGameRoom() {
+  if (gameState.roomId) socket.emit('leaveGameRoom', { roomId: gameState.roomId });
+  gameState.roomId = null;
+  $('multiWaiting').classList.add('hidden');
+  $('multiLobby').classList.remove('hidden');
+}
+
+// 게임 소켓 이벤트
+socket.on('gameRoomsList', (rooms) => {
+  const list = $('gameRoomList');
+  if (!list) return;
+  const filtered = rooms.filter(r => r.gameType === gameState.type && r.players.length < 2);
+  if (filtered.length === 0) {
+    list.innerHTML = `<div style="text-align:center;padding:16px;color:var(--text-3);font-size:13px">참가 가능한 방이 없습니다.<br>방을 직접 만들어보세요!</div>`;
+    return;
+  }
+  list.innerHTML = filtered.map(r => `
+    <div class="game-room-item">
+      <div class="room-info">
+        <div class="room-name">${escHtml(r.players[0]?.nickname || '익명')}의 방</div>
+        <div class="room-meta">1/2 명 대기 중</div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="joinGameRoom('${r.id}')">참가</button>
+    </div>`).join('');
+});
+
+socket.on('gameRoomCreated', (room) => {
+  gameState.roomId = room.id;
+  gameState.mySymbol = gameState.type === 'gomoku' ? '⚫' : 'X';
+  gameState.myTurn = true;
+  $('multiLobby').classList.add('hidden');
+  $('multiWaiting').classList.remove('hidden');
+  $('multiRoomId').textContent = `방 ID: ${room.id.slice(0,8)}`;
+});
+
+socket.on('gameRoomReady', (room) => {
+  gameState.roomId = room.id;
+  const isFirst = room.players[0].socketId === socket.id;
+  gameState.mySymbol = gameState.type === 'gomoku' ? (isFirst ? '⚫' : '⚪') : (isFirst ? 'X' : 'O');
+  gameState.myTurn = isFirst;
+  $('multiWaiting').classList.add('hidden');
+  startGame('multi');
+  showToast('상대방이 입장했습니다! 게임 시작!', 'success');
+});
+
+socket.on('gameRoomError', ({ message }) => showToast(message, 'error'));
+
+socket.on('gameMove', ({ move }) => {
+  if (gameState.type === 'gomoku') applyGomokuMove(move, false);
+  else if (gameState.type === 'tictactoe') applyTTTMove(move.idx, false);
+});
+
+socket.on('gameOpponentLeft', () => {
+  showToast('상대방이 게임을 떠났습니다.', 'warning');
+  $('gameStatus').textContent = '상대방이 나갔습니다.';
+  gameState.isOver = true;
+});
+
+// =============================================
+// 오목
+// =============================================
+const GOMOKU_SIZE = 13;
+
+function initGomoku(mode) {
+  gameState.board = Array(GOMOKU_SIZE).fill(null).map(() => Array(GOMOKU_SIZE).fill(null));
+  gameState.isOver = false;
+  if (mode === 'ai') { gameState.mySymbol = '⚫'; gameState.myTurn = true; }
+
+  const inner = $('gameBoardInner');
+  inner.innerHTML = '';
+  const board = document.createElement('div');
+  board.className = 'gomoku-board';
+  board.style.gridTemplateColumns = `repeat(${GOMOKU_SIZE}, 30px)`;
+
+  for (let r = 0; r < GOMOKU_SIZE; r++) {
+    for (let c = 0; c < GOMOKU_SIZE; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'gomoku-cell hline vline';
+      const span = document.createElement('span');
+      span.dataset.r = r; span.dataset.c = c;
+      span.onclick = () => handleGomokuClick(r, c);
+      cell.appendChild(span);
+      board.appendChild(cell);
+    }
+  }
+  inner.appendChild(board);
+  updateGomokuStatus();
+}
+
+function handleGomokuClick(r, c) {
+  if (gameState.isOver || !gameState.myTurn || gameState.board[r][c]) return;
+  applyGomokuMove({ r, c }, true);
+  if (gameState.mode === 'multi' && !gameState.isOver) {
+    socket.emit('gameMove', { roomId: gameState.roomId, move: { r, c } });
+  }
+  if (gameState.mode === 'ai' && !gameState.isOver) {
+    setTimeout(() => { const move = gomokuAI(); if (move) applyGomokuMove(move, false); }, 300);
+  }
+}
+
+function applyGomokuMove({ r, c }, isMe) {
+  const symbol = isMe ? gameState.mySymbol : (gameState.mySymbol === '⚫' ? '⚪' : '⚫');
+  gameState.board[r][c] = symbol;
+  const span = $('gameBoardInner').querySelector(`span[data-r="${r}"][data-c="${c}"]`);
+  if (span) span.textContent = symbol;
+  gameState.myTurn = !isMe;
+  if (checkGomokuWin(r, c, symbol)) {
+    gameState.isOver = true;
+    $('gameStatus').textContent = isMe ? '🎉 내가 이겼습니다!' : '😢 상대방이 이겼습니다!';
+    if (gameState.mode === 'multi') socket.emit('gameEnd', { roomId: gameState.roomId, result: {} });
+  } else {
+    updateGomokuStatus();
+  }
+}
+
+function updateGomokuStatus() {
+  $('gameStatus').textContent = gameState.myTurn
+    ? `내 차례 ${gameState.mySymbol}`
+    : `상대 차례 ${gameState.mySymbol === '⚫' ? '⚪' : '⚫'}`;
+}
+
+function checkGomokuWin(r, c, sym) {
+  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
+  for (const [dr,dc] of dirs) {
+    let cnt = 1;
+    for (let i = 1; i < 5; i++) { const nr=r+dr*i,nc=c+dc*i; if (nr<0||nr>=GOMOKU_SIZE||nc<0||nc>=GOMOKU_SIZE||gameState.board[nr][nc]!==sym) break; cnt++; }
+    for (let i = 1; i < 5; i++) { const nr=r-dr*i,nc=c-dc*i; if (nr<0||nr>=GOMOKU_SIZE||nc<0||nc>=GOMOKU_SIZE||gameState.board[nr][nc]!==sym) break; cnt++; }
+    if (cnt >= 5) return true;
+  }
+  return false;
+}
+
+function gomokuAI() {
+  const aiSym = gameState.mySymbol === '⚫' ? '⚪' : '⚫';
+  const mySym = gameState.mySymbol;
+  let best = null, bestScore = -1;
+  const empty = [];
+  for (let r=0;r<GOMOKU_SIZE;r++) for (let c=0;c<GOMOKU_SIZE;c++) if (!gameState.board[r][c]) empty.push([r,c]);
+  for (const [r,c] of empty) {
+    let score = 0;
+    gameState.board[r][c] = aiSym;
+    if (checkGomokuWin(r,c,aiSym)) { gameState.board[r][c] = null; return {r,c}; }
+    gameState.board[r][c] = null;
+    gameState.board[r][c] = mySym;
+    if (checkGomokuWin(r,c,mySym)) score += 900;
+    gameState.board[r][c] = null;
+    const dirs=[[0,1],[1,0],[1,1],[1,-1]];
+    for (const [dr,dc] of dirs) {
+      let a=0,b=0;
+      for(let i=1;i<5;i++){const nr=r+dr*i,nc=c+dc*i;if(nr<0||nr>=GOMOKU_SIZE||nc<0||nc>=GOMOKU_SIZE)break;if(gameState.board[nr][nc]===aiSym)a++;else break;}
+      for(let i=1;i<5;i++){const nr=r-dr*i,nc=c-dc*i;if(nr<0||nr>=GOMOKU_SIZE||nc<0||nc>=GOMOKU_SIZE)break;if(gameState.board[nr][nc]===aiSym)b++;else break;}
+      score += Math.pow(10, a+b);
+    }
+    if (score > bestScore) { bestScore = score; best = {r,c}; }
+  }
+  if (!best && empty.length) best = { r: empty[0][0], c: empty[0][1] };
+  return best;
+}
+
+// =============================================
+// 틱택토
+// =============================================
+function initTicTacToe(mode) {
+  gameState.board = Array(9).fill(null);
+  gameState.isOver = false;
+  if (mode === 'ai') { gameState.mySymbol = 'X'; gameState.myTurn = true; }
+
+  const inner = $('gameBoardInner');
+  inner.innerHTML = '';
+  const board = document.createElement('div');
+  board.className = 'ttt-board';
+  for (let i = 0; i < 9; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'ttt-cell';
+    cell.dataset.idx = i;
+    cell.onclick = () => handleTTTClick(i);
+    board.appendChild(cell);
+  }
+  inner.style.display = 'flex'; inner.style.justifyContent = 'center'; inner.style.padding = '12px 0';
+  inner.appendChild(board);
+  updateTTTStatus();
+}
+
+function handleTTTClick(idx) {
+  if (gameState.isOver || !gameState.myTurn || gameState.board[idx]) return;
+  applyTTTMove(idx, true);
+  if (gameState.mode === 'multi' && !gameState.isOver) {
+    socket.emit('gameMove', { roomId: gameState.roomId, move: { idx } });
+  }
+  if (gameState.mode === 'ai' && !gameState.isOver) {
+    setTimeout(() => { const i = tttAI(); if (i !== null) applyTTTMove(i, false); }, 300);
+  }
+}
+
+function applyTTTMove(idx, isMe) {
+  const sym = isMe ? gameState.mySymbol : (gameState.mySymbol === 'X' ? 'O' : 'X');
+  gameState.board[idx] = sym;
+  const cell = $('gameBoardInner').querySelector(`[data-idx="${idx}"]`);
+  if (cell) { cell.textContent = sym === 'X' ? '❌' : '⭕'; cell.classList.add('taken'); }
+  gameState.myTurn = !isMe;
+  const winner = checkTTTWin();
+  if (winner) {
+    gameState.isOver = true;
+    $('gameStatus').textContent = winner === gameState.mySymbol ? '🎉 내가 이겼습니다!' : '😢 상대방이 이겼습니다!';
+    if (gameState.mode === 'multi') socket.emit('gameEnd', { roomId: gameState.roomId, result: {} });
+  } else if (gameState.board.every(v => v)) {
+    gameState.isOver = true;
+    $('gameStatus').textContent = '🤝 무승부!';
+  } else { updateTTTStatus(); }
+}
+
+function checkTTTWin() {
+  const lines = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  for (const [a,b,c] of lines) {
+    if (gameState.board[a] && gameState.board[a]===gameState.board[b] && gameState.board[a]===gameState.board[c]) return gameState.board[a];
+  }
+  return null;
+}
+
+function tttAI() {
+  const aiSym = gameState.mySymbol === 'X' ? 'O' : 'X';
+  const mySym = gameState.mySymbol;
+  const lines = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  for (const [a,b,c] of lines) {
+    if ([gameState.board[a],gameState.board[b],gameState.board[c]].filter(x=>x===aiSym).length===2 &&
+        [a,b,c].find(i=>!gameState.board[i])!==undefined) return [a,b,c].find(i=>!gameState.board[i]);
+  }
+  for (const [a,b,c] of lines) {
+    if ([gameState.board[a],gameState.board[b],gameState.board[c]].filter(x=>x===mySym).length===2 &&
+        [a,b,c].find(i=>!gameState.board[i])!==undefined) return [a,b,c].find(i=>!gameState.board[i]);
+  }
+  if (!gameState.board[4]) return 4;
+  const corners = [0,2,6,8].filter(i=>!gameState.board[i]);
+  if (corners.length) return corners[Math.floor(Math.random()*corners.length)];
+  return [1,3,5,7].find(i=>!gameState.board[i]) ?? null;
+}
+
+function updateTTTStatus() {
+  $('gameStatus').textContent = gameState.myTurn ? `내 차례 ${gameState.mySymbol==='X'?'❌':'⭕'}` : `상대 차례`;
+}
+
+// =============================================
+// 뱀 게임
+// =============================================
+function initSnake() {
+  if (gameState.snakeTimer) clearInterval(gameState.snakeTimer);
+  const COLS = 20, ROWS = 16, CELL = 20;
+  let snake = [{x:10,y:8},{x:9,y:8},{x:8,y:8}];
+  let dir = {x:1,y:0}, nextDir = {x:1,y:0};
+  let food = randomFood(snake, COLS, ROWS);
+  let score = 0;
+  gameState.isOver = false;
+
+  const inner = $('gameBoardInner');
+  inner.style = 'display:flex;justify-content:center;padding:8px 0';
+  inner.innerHTML = '';
+  const canvas = document.createElement('canvas');
+  canvas.className = 'snake-canvas';
+  canvas.width = COLS * CELL; canvas.height = ROWS * CELL;
+  inner.appendChild(canvas);
+  const ctx = canvas.getContext('2d');
+
+  const keyHandler = (e) => {
+    const map = { ArrowUp:{x:0,y:-1}, ArrowDown:{x:0,y:1}, ArrowLeft:{x:-1,y:0}, ArrowRight:{x:1,y:0},
+                  w:{x:0,y:-1}, s:{x:0,y:1}, a:{x:-1,y:0}, d:{x:1,y:0} };
+    const nd = map[e.key];
+    if (nd && !(nd.x===-dir.x && nd.y===-dir.y)) { nextDir = nd; e.preventDefault(); }
+  };
+  document.addEventListener('keydown', keyHandler);
+  canvas._cleanup = () => document.removeEventListener('keydown', keyHandler);
+
+  function draw() {
+    ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = '#ff6b6b';
+    ctx.beginPath(); ctx.arc((food.x+.5)*CELL,(food.y+.5)*CELL,CELL*.4,0,Math.PI*2); ctx.fill();
+    snake.forEach((seg,i) => {
+      ctx.fillStyle = i===0 ? '#00d4aa' : '#00a884';
+      ctx.beginPath(); ctx.roundRect(seg.x*CELL+1,seg.y*CELL+1,CELL-2,CELL-2,4); ctx.fill();
+    });
+    ctx.fillStyle='#fff'; ctx.font='12px sans-serif'; ctx.fillText(`점수: ${score}`,6,14);
+  }
+
+  function tick() {
+    dir = nextDir;
+    const head = {x: snake[0].x+dir.x, y: snake[0].y+dir.y};
+    if (head.x<0||head.x>=COLS||head.y<0||head.y>=ROWS||snake.some(s=>s.x===head.x&&s.y===head.y)) {
+      clearInterval(gameState.snakeTimer);
+      canvas._cleanup && canvas._cleanup();
+      $('gameStatus').textContent = `💀 게임오버! 최종 점수: ${score}`;
+      return;
+    }
+    snake.unshift(head);
+    if (head.x===food.x && head.y===food.y) { score++; food=randomFood(snake,COLS,ROWS); }
+    else snake.pop();
+    draw();
+  }
+
+  draw();
+  $('gameStatus').textContent = '방향키 또는 WASD로 조작하세요!';
+  gameState.snakeTimer = setInterval(tick, 130);
+  canvas.addEventListener('remove', () => { clearInterval(gameState.snakeTimer); canvas._cleanup&&canvas._cleanup(); });
+}
+
+function randomFood(snake, cols, rows) {
+  let f;
+  do { f={x:Math.floor(Math.random()*cols),y:Math.floor(Math.random()*rows)}; }
+  while (snake.some(s=>s.x===f.x&&s.y===f.y));
+  return f;
+}

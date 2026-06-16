@@ -57,11 +57,16 @@ let rankingsData = loadJSON('rankings.json', {
   recommendedPostId: null,
 });
 
+// 멤버 (방문자 기록)
+let members = loadJSON('members.json', {}); // { userId: { nickname, color, avatarUrl, bio, firstSeen, lastSeen } }
+const saveMembers = () => saveJSON('members.json', members);
+
 // 인메모리
 let onlineUsers    = {};
 let globalMessages = [];
 let directMessages = {};
 let groupRooms     = {};
+let gameRooms      = {}; // { roomId: { id, gameType, players, createdAt } }
 
 // =============================================
 // 좋아요 형식 마이그레이션 (배열 → 객체)
@@ -458,6 +463,45 @@ app.post('/api/upload/avatar', uploadAvatar.single('avatar'), (req, res) => {
 });
 
 // =============================================
+// API - 멤버 목록
+// =============================================
+app.get('/api/members', (req, res) => {
+  const onlineUserIds = new Set(Object.values(onlineUsers).map(u => u.userId));
+  const list = Object.values(members).map(m => ({
+    ...m,
+    isOnline: onlineUserIds.has(m.userId),
+  })).sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen));
+  res.json(list);
+});
+
+// 유저 프로필 상세
+app.get('/api/users/:userId/profile', (req, res) => {
+  const { userId } = req.params;
+  const member = members[userId];
+  if (!member) return res.status(404).json({ error: '사용자 없음' });
+  const myPosts = posts.filter(p => p.authorId === userId);
+  const breakdown = { '👍': 0, '😂': 0, '🧠': 0, '💀': 0 };
+  let total = 0;
+  for (const p of myPosts) {
+    for (const t of LIKE_TYPES) {
+      const cnt = likes[p.id]?.[t]?.length || 0;
+      breakdown[t] += cnt; total += cnt;
+    }
+  }
+  const ranked = enrichTop10(rankingsData.top10).find(u => u.userId === userId);
+  const isOnline = Object.values(onlineUsers).some(u => u.userId === userId);
+  res.json({
+    ...member,
+    isOnline,
+    totalLikes: total,
+    likeBreakdown: breakdown,
+    postCount: myPosts.length,
+    recentPosts: myPosts.reverse().slice(0, 5).map(postResponse),
+    rank: ranked || null,
+  });
+});
+
+// =============================================
 // API - 랭킹
 // =============================================
 app.get('/api/rankings', (req, res) => {
@@ -620,18 +664,32 @@ io.on('connection', (socket) => {
     const taken = Object.values(onlineUsers).some(u => u.nickname === nickname);
     if (taken) { socket.emit('nicknameTaken', { nickname }); return; }
 
+    const userId = userData.userId || socket.id;
     onlineUsers[socket.id] = {
       socketId: socket.id,
       nickname,
-      userId: userData.userId || socket.id,
+      userId,
       color: userData.color || '#2563eb',
       avatarUrl: userData.avatarUrl || null,
       bio: (userData.bio || '').slice(0, 100),
       joinedAt: new Date().toISOString()
     };
 
+    // 멤버 기록
+    members[userId] = {
+      userId,
+      nickname,
+      color: userData.color || '#2563eb',
+      avatarUrl: userData.avatarUrl || null,
+      bio: (userData.bio || '').slice(0, 100),
+      firstSeen: members[userId]?.firstSeen || new Date().toISOString(),
+      lastSeen: new Date().toISOString(),
+    };
+    saveMembers();
+
     socket.join('global');
     io.emit('onlineUsers', Object.values(onlineUsers));
+    io.emit('membersUpdate', Object.values(members));
     io.emit('systemMessage', { type: 'join', nickname, message: `${nickname}님이 입장하셨습니다.`, createdAt: new Date().toISOString() });
     socket.emit('groupRooms', Object.values(groupRooms));
     socket.emit('globalHistory', globalMessages.slice(-50));
@@ -747,7 +805,67 @@ io.on('connection', (socket) => {
     delete onlineUsers[socket.id];
     io.emit('onlineUsers', Object.values(onlineUsers));
     if (user) io.emit('systemMessage', { type: 'leave', nickname: user.nickname, message: `${user.nickname}님이 퇴장하셨습니다.`, createdAt: new Date().toISOString() });
+    // 게임방 정리
+    for (const roomId in gameRooms) {
+      const room = gameRooms[roomId];
+      if (room.players.some(p => p.socketId === socket.id)) {
+        io.to(`game-${roomId}`).emit('gameOpponentLeft');
+        delete gameRooms[roomId];
+        io.emit('gameRoomsList', Object.values(gameRooms));
+      }
+    }
     console.log(`[해제] ${socket.id}`);
+  });
+
+  // =============================================
+  // 게임 Socket 이벤트
+  // =============================================
+  socket.on('getGameRooms', () => {
+    socket.emit('gameRoomsList', Object.values(gameRooms));
+  });
+
+  socket.on('createGameRoom', ({ gameType, nickname }) => {
+    const room = {
+      id: uuidv4(),
+      gameType,
+      players: [{ socketId: socket.id, nickname: nickname || onlineUsers[socket.id]?.nickname || '익명' }],
+      createdAt: new Date().toISOString(),
+    };
+    gameRooms[room.id] = room;
+    socket.join(`game-${room.id}`);
+    socket.emit('gameRoomCreated', room);
+    io.emit('gameRoomsList', Object.values(gameRooms));
+  });
+
+  socket.on('joinGameRoom', ({ roomId }) => {
+    const room = gameRooms[roomId];
+    if (!room) { socket.emit('gameRoomError', { message: '방을 찾을 수 없습니다.' }); return; }
+    if (room.players.length >= 2) { socket.emit('gameRoomError', { message: '방이 가득 찼습니다.' }); return; }
+    room.players.push({ socketId: socket.id, nickname: onlineUsers[socket.id]?.nickname || '익명' });
+    socket.join(`game-${room.id}`);
+    io.to(`game-${room.id}`).emit('gameRoomReady', room);
+    io.emit('gameRoomsList', Object.values(gameRooms));
+  });
+
+  socket.on('gameMove', ({ roomId, move }) => {
+    socket.to(`game-${roomId}`).emit('gameMove', { move, socketId: socket.id });
+  });
+
+  socket.on('gameEnd', ({ roomId, result }) => {
+    if (gameRooms[roomId]) {
+      io.to(`game-${roomId}`).emit('gameEnd', result);
+      delete gameRooms[roomId];
+      io.emit('gameRoomsList', Object.values(gameRooms));
+    }
+  });
+
+  socket.on('leaveGameRoom', ({ roomId }) => {
+    if (gameRooms[roomId]) {
+      socket.to(`game-${roomId}`).emit('gameOpponentLeft');
+      delete gameRooms[roomId];
+      io.emit('gameRoomsList', Object.values(gameRooms));
+    }
+    socket.leave(`game-${roomId}`);
   });
 });
 
