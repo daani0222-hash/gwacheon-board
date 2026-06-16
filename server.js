@@ -127,8 +127,26 @@ const saveBlockGames = () => { saveJSON('block-games.json', blockGames); if (use
 let accounts = loadJSON('accounts.json', []); // [{ id, username, passwordHash, salt, nickname, color, bio, avatarUrl, createdAt }]
 const saveAccounts = () => saveJSON('accounts.json', accounts);
 
-// 인메모리 세션: token -> { userId, exp }
-const sessions = new Map();
+// 세션 (파일 영구 저장 — 서버 재시작해도 유지됨)
+const _sessionsRaw = loadJSON('sessions.json', {});
+const sessions = new Map(Object.entries(_sessionsRaw).filter(([,v]) => v.exp > Date.now()));
+
+function saveSessions() {
+  const obj = {};
+  for (const [token, data] of sessions) {
+    if (data.exp > Date.now()) obj[token] = data;
+  }
+  saveJSON('sessions.json', obj);
+}
+
+// 만료 세션 주기적 정리 (1시간)
+setInterval(() => {
+  let changed = false;
+  for (const [token, data] of sessions) {
+    if (data.exp < Date.now()) { sessions.delete(token); changed = true; }
+  }
+  if (changed) saveSessions();
+}, 60 * 60 * 1000);
 
 // =============================================
 // 인증 헬퍼
@@ -443,6 +461,7 @@ app.post('/api/auth/register', (req, res) => {
 
   const token = makeToken();
   sessions.set(token, { userId: user.id, exp: Date.now() + 30 * 24 * 60 * 60 * 1000 });
+  saveSessions();
   res.json({ success: true, token, user: safeUser(user) });
 });
 
@@ -456,6 +475,7 @@ app.post('/api/auth/login', (req, res) => {
 
   const token = makeToken();
   sessions.set(token, { userId: user.id, exp: Date.now() + 30 * 24 * 60 * 60 * 1000 });
+  saveSessions();
   res.json({ success: true, token, user: safeUser(user) });
 });
 
@@ -471,6 +491,7 @@ app.get('/api/auth/me', (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   const token = (req.headers['authorization'] || '').replace('Bearer ', '');
   sessions.delete(token);
+  saveSessions();
   res.json({ success: true });
 });
 
