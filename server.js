@@ -11,6 +11,7 @@ const multer = require('multer');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
+const crypto = require('crypto');
 
 // =============================================
 // MongoDB 지원 (MONGODB_URI 환경변수 필요)
@@ -121,6 +122,36 @@ const saveMembers = () => { saveJSON('members.json', members); if (useDB) dbSet(
 // 블록 게임 (유저 제작)
 let blockGames = loadJSON('block-games.json', []);
 const saveBlockGames = () => { saveJSON('block-games.json', blockGames); if (useDB) dbSet('blockGames', blockGames); };
+
+// 회원 계정 (영구 저장)
+let accounts = loadJSON('accounts.json', []); // [{ id, username, passwordHash, salt, nickname, color, bio, avatarUrl, createdAt }]
+const saveAccounts = () => saveJSON('accounts.json', accounts);
+
+// 인메모리 세션: token -> { userId, exp }
+const sessions = new Map();
+
+// =============================================
+// 인증 헬퍼
+// =============================================
+function hashPassword(password, salt) {
+  return crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256').toString('hex');
+}
+function makeToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+function authMiddleware(req, res, next) {
+  const token = (req.headers['authorization'] || '').replace('Bearer ', '');
+  const session = token && sessions.get(token);
+  if (!session || session.exp < Date.now()) return res.status(401).json({ error: '로그인이 필요합니다' });
+  const user = accounts.find(u => u.id === session.userId);
+  if (!user) return res.status(401).json({ error: '계정을 찾을 수 없습니다' });
+  req.authUser = user;
+  next();
+}
+function safeUser(user) {
+  const { passwordHash, salt, ...rest } = user;
+  return rest;
+}
 
 // 인메모리
 let onlineUsers    = {};
@@ -373,6 +404,103 @@ function postResponse(p) {
     isRecommended: rankingsData.recommendedPostId === p.id,
   };
 }
+
+// =============================================
+// API - 인증 (회원가입 / 로그인)
+// =============================================
+app.post('/api/auth/register', (req, res) => {
+  const { username, password, nickname } = req.body || {};
+  if (!username || !password || !nickname)
+    return res.json({ error: '모든 항목을 입력하세요' });
+  if (username.length < 3 || username.length > 20)
+    return res.json({ error: '아이디는 3~20자여야 합니다' });
+  if (!/^[a-zA-Z0-9_]+$/.test(username))
+    return res.json({ error: '아이디는 영문·숫자·밑줄(_)만 사용 가능합니다' });
+  if (password.length < 4)
+    return res.json({ error: '비밀번호는 4자 이상이어야 합니다' });
+  if (nickname.length < 2 || nickname.length > 20)
+    return res.json({ error: '닉네임은 2~20자여야 합니다' });
+  if (accounts.find(u => u.username.toLowerCase() === username.toLowerCase()))
+    return res.json({ error: '이미 사용 중인 아이디입니다' });
+  if (accounts.find(u => u.nickname === nickname))
+    return res.json({ error: '이미 사용 중인 닉네임입니다' });
+
+  const salt = crypto.randomBytes(16).toString('hex');
+  const COLORS = ['#2563eb','#7c3aed','#db2777','#dc2626','#d97706','#16a34a','#0891b2','#374151'];
+  const user = {
+    id: 'u_' + crypto.randomBytes(6).toString('hex'),
+    username,
+    passwordHash: hashPassword(password, salt),
+    salt,
+    nickname,
+    color: COLORS[Math.floor(Math.random() * COLORS.length)],
+    bio: '',
+    avatarUrl: null,
+    createdAt: new Date().toISOString(),
+  };
+  accounts.push(user);
+  saveAccounts();
+
+  const token = makeToken();
+  sessions.set(token, { userId: user.id, exp: Date.now() + 30 * 24 * 60 * 60 * 1000 });
+  res.json({ success: true, token, user: safeUser(user) });
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password)
+    return res.json({ error: '아이디와 비밀번호를 입력하세요' });
+  const user = accounts.find(u => u.username.toLowerCase() === username.toLowerCase());
+  if (!user || hashPassword(password, user.salt) !== user.passwordHash)
+    return res.json({ error: '아이디 또는 비밀번호가 올바르지 않습니다' });
+
+  const token = makeToken();
+  sessions.set(token, { userId: user.id, exp: Date.now() + 30 * 24 * 60 * 60 * 1000 });
+  res.json({ success: true, token, user: safeUser(user) });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  const token = (req.headers['authorization'] || '').replace('Bearer ', '');
+  const session = token && sessions.get(token);
+  if (!session || session.exp < Date.now()) return res.status(401).json({ error: '로그인 필요' });
+  const user = accounts.find(u => u.id === session.userId);
+  if (!user) return res.status(401).json({ error: '계정을 찾을 수 없습니다' });
+  res.json({ user: safeUser(user) });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const token = (req.headers['authorization'] || '').replace('Bearer ', '');
+  sessions.delete(token);
+  res.json({ success: true });
+});
+
+app.put('/api/auth/profile', authMiddleware, (req, res) => {
+  const { nickname, bio, color } = req.body || {};
+  const user = req.authUser;
+  if (nickname !== undefined) {
+    if (nickname.length < 2 || nickname.length > 20)
+      return res.json({ error: '닉네임은 2~20자여야 합니다' });
+    if (accounts.find(u => u.nickname === nickname && u.id !== user.id))
+      return res.json({ error: '이미 사용 중인 닉네임입니다' });
+    user.nickname = nickname.trim();
+  }
+  if (bio !== undefined) user.bio = bio.trim().slice(0, 100);
+  if (color !== undefined) user.color = color;
+  saveAccounts();
+  res.json({ success: true, user: safeUser(user) });
+});
+
+app.put('/api/auth/password', authMiddleware, (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  const user = req.authUser;
+  if (!currentPassword || !newPassword) return res.json({ error: '비밀번호를 입력하세요' });
+  if (hashPassword(currentPassword, user.salt) !== user.passwordHash)
+    return res.json({ error: '현재 비밀번호가 올바르지 않습니다' });
+  if (newPassword.length < 4) return res.json({ error: '새 비밀번호는 4자 이상이어야 합니다' });
+  user.passwordHash = hashPassword(newPassword, user.salt);
+  saveAccounts();
+  res.json({ success: true });
+});
 
 // =============================================
 // API - 게시글

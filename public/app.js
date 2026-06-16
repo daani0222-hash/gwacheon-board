@@ -1,7 +1,21 @@
 /**
- * app.js - 과천중 비밀게시판 클라이언트 v2.02
+ * app.js - 과천중 비밀게시판 클라이언트 v2.03
  */
-console.log('%c과천중 게임존 v2.02 로드됨 ✅', 'color:#6366f1;font-weight:bold;font-size:14px');
+console.log('%c과천중 게임존 v2.03 로드됨 ✅', 'color:#6366f1;font-weight:bold;font-size:14px');
+
+// =============================================
+// 인증 토큰
+// =============================================
+let _authToken = localStorage.getItem('gwacheon_token') || null;
+
+function getAuthHeaders() {
+  return _authToken ? { 'Authorization': 'Bearer ' + _authToken } : {};
+}
+
+function authFetch(url, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers || {}, getAuthHeaders());
+  return fetch(url, opts);
+}
 
 // =============================================
 // 사용자 세션
@@ -23,6 +37,20 @@ function generateId() {
 function randomColor() {
   const colors = ['#2563eb','#7c3aed','#db2777','#dc2626','#d97706','#16a34a','#0891b2','#374151'];
   return colors[Math.floor(Math.random() * colors.length)];
+}
+
+function applyAccountUser(user) {
+  USER.id        = user.id;
+  USER.nickname  = user.nickname;
+  USER.color     = user.color;
+  USER.avatarUrl = user.avatarUrl || null;
+  USER.bio       = user.bio || '';
+  localStorage.setItem('userId',    USER.id);
+  localStorage.setItem('nickname',  USER.nickname);
+  localStorage.setItem('color',     USER.color);
+  if (USER.avatarUrl) localStorage.setItem('avatarUrl', USER.avatarUrl);
+  else localStorage.removeItem('avatarUrl');
+  localStorage.setItem('bio', USER.bio);
 }
 
 // =============================================
@@ -142,16 +170,11 @@ const EMOJIS = [
 document.addEventListener('DOMContentLoaded', () => {
   buildEmojiPicker();
   bindEvents();
-
-  if (USER.nickname) {
-    startApp();
-  } else {
-    dom.nicknameModal.style.display = 'flex';
-    dom.nicknameInput.focus();
-  }
+  initAuth();
 });
 
 function startApp() {
+  if ($('authModal')) $('authModal').classList.add('hidden');
   dom.nicknameModal.style.display = 'none';
   dom.app.classList.remove('hidden');
 
@@ -164,14 +187,159 @@ function startApp() {
 }
 
 // =============================================
+// 인증 (회원가입 / 로그인)
+// =============================================
+async function initAuth() {
+  if (_authToken) {
+    try {
+      const res = await fetch('/api/auth/me', { headers: getAuthHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        applyAccountUser(data.user);
+        startApp();
+        return;
+      }
+    } catch(e) {}
+    _authToken = null;
+    localStorage.removeItem('gwacheon_token');
+  }
+  showAuthModal();
+}
+
+function showAuthModal() {
+  const m = $('authModal');
+  if (m) m.classList.remove('hidden');
+}
+
+function hideAuthModal() {
+  const m = $('authModal');
+  if (m) m.classList.add('hidden');
+}
+
+function switchAuthTab(tab) {
+  const isLogin = tab === 'login';
+  $('authLoginForm').classList.toggle('hidden', !isLogin);
+  $('authRegisterForm').classList.toggle('hidden', isLogin);
+  $('authTabLogin').classList.toggle('active', isLogin);
+  $('authTabRegister').classList.toggle('active', !isLogin);
+  if (isLogin) {
+    $('loginError').classList.add('hidden');
+    setTimeout(() => $('loginUsername').focus(), 50);
+  } else {
+    $('registerError').classList.add('hidden');
+    setTimeout(() => $('regUsername').focus(), 50);
+  }
+}
+
+async function doLogin() {
+  const username = $('loginUsername').value.trim();
+  const password = $('loginPassword').value;
+  const errEl = $('loginError');
+  errEl.classList.add('hidden');
+
+  if (!username || !password) { errEl.textContent = '아이디와 비밀번호를 입력하세요'; errEl.classList.remove('hidden'); return; }
+
+  const btn = $('loginBtn');
+  btn.disabled = true; btn.textContent = '로그인 중...';
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (data.error) { errEl.textContent = data.error; errEl.classList.remove('hidden'); return; }
+
+    _authToken = data.token;
+    localStorage.setItem('gwacheon_token', _authToken);
+    applyAccountUser(data.user);
+    hideAuthModal();
+    startApp();
+    showToast(`환영합니다, ${data.user.nickname}님!`, 'success');
+  } catch(e) {
+    errEl.textContent = '서버 오류가 발생했습니다. 잠시 후 다시 시도하세요.';
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> 로그인';
+  }
+}
+
+async function doRegister() {
+  const username = $('regUsername').value.trim();
+  const nickname = $('regNickname').value.trim();
+  const password = $('regPassword').value;
+  const passwordConfirm = $('regPasswordConfirm').value;
+  const errEl = $('registerError');
+  errEl.classList.add('hidden');
+
+  if (!username || !nickname || !password) { errEl.textContent = '모든 항목을 입력하세요'; errEl.classList.remove('hidden'); return; }
+  if (password !== passwordConfirm) { errEl.textContent = '비밀번호가 일치하지 않습니다'; errEl.classList.remove('hidden'); return; }
+
+  const btn = $('registerBtn');
+  btn.disabled = true; btn.textContent = '가입 처리 중...';
+
+  try {
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, nickname }),
+    });
+    const data = await res.json();
+    if (data.error) { errEl.textContent = data.error; errEl.classList.remove('hidden'); return; }
+
+    _authToken = data.token;
+    localStorage.setItem('gwacheon_token', _authToken);
+    applyAccountUser(data.user);
+    hideAuthModal();
+    startApp();
+    showToast(`가입 완료! 환영합니다, ${data.user.nickname}님 🎉`, 'success');
+  } catch(e) {
+    errEl.textContent = '서버 오류가 발생했습니다. 잠시 후 다시 시도하세요.';
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-user-plus"></i> 가입하기';
+  }
+}
+
+async function doLogout() {
+  if (!confirm('로그아웃하시겠습니까?')) return;
+  try {
+    await fetch('/api/auth/logout', { method: 'POST', headers: getAuthHeaders() });
+  } catch(e) {}
+  _authToken = null;
+  localStorage.removeItem('gwacheon_token');
+  localStorage.removeItem('userId');
+  localStorage.removeItem('nickname');
+  localStorage.removeItem('color');
+  localStorage.removeItem('avatarUrl');
+  localStorage.removeItem('bio');
+  closeSettingsModal();
+  dom.app.classList.add('hidden');
+  showAuthModal();
+  switchAuthTab('login');
+}
+
+// =============================================
 // 이벤트 바인딩
 // =============================================
 function bindEvents() {
   // 닉네임 모달
-  dom.setNicknameBtn.addEventListener('click', handleSetNickname);
-  dom.nicknameInput.addEventListener('keydown', (e) => {
+  // 레거시 닉네임 모달
+  dom.setNicknameBtn && dom.setNicknameBtn.addEventListener('click', handleSetNickname);
+  dom.nicknameInput && dom.nicknameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') handleSetNickname();
   });
+
+  // 인증 모달 Enter 키
+  const loginPwInput = $('loginPassword');
+  if (loginPwInput) loginPwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+  const loginUserInput = $('loginUsername');
+  if (loginUserInput) loginUserInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+  const regPwConfirm = $('regPasswordConfirm');
+  if (regPwConfirm) regPwConfirm.addEventListener('keydown', (e) => { if (e.key === 'Enter') doRegister(); });
 
   socket.on('nicknameResult', ({ available, nickname }) => {
     if (available) {
@@ -1555,6 +1723,28 @@ async function saveSettings() {
     return;
   }
 
+  // 비밀번호 변경 (입력된 경우)
+  const currentPw = $('currentPwInput')?.value || '';
+  const newPw = $('newPwInput')?.value || '';
+  if (newPw) {
+    if (!currentPw) { showToast('현재 비밀번호를 입력하세요', 'error'); return; }
+    if (newPw.length < 4) { showToast('새 비밀번호는 4자 이상이어야 합니다', 'error'); return; }
+    try {
+      const pwRes = await authFetch('/api/auth/password', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword: currentPw, newPassword: newPw }),
+      });
+      const pwData = await pwRes.json();
+      if (pwData.error) { showToast(pwData.error, 'error'); return; }
+      if ($('currentPwInput')) $('currentPwInput').value = '';
+      if ($('newPwInput')) $('newPwInput').value = '';
+    } catch(e) {
+      showToast('비밀번호 변경 중 오류가 발생했습니다', 'error');
+      return;
+    }
+  }
+
   const avatarFile = dom.avatarInput?.files?.[0];
   if (avatarFile) {
     const formData = new FormData();
@@ -1569,6 +1759,19 @@ async function saveSettings() {
       showToast('프로필 사진 업로드에 실패했습니다.', 'error');
       return;
     }
+  }
+
+  // 서버에 프로필 업데이트 (계정 있는 경우)
+  if (_authToken) {
+    try {
+      const profileRes = await authFetch('/api/auth/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname: newNickname, bio: newBio, color: USER.color }),
+      });
+      const profileData = await profileRes.json();
+      if (profileData.error) { showToast(profileData.error, 'error'); return; }
+    } catch(e) { /* 소켓으로 폴백 */ }
   }
 
   const oldNickname = USER.nickname;
@@ -4099,4 +4302,9 @@ window.loadUserGames    = loadUserGames;
 window.openUserGame     = openUserGame;
 window.closeUserGame    = closeUserGame;
 window.snakeSetDir      = (dx,dy) => window._snakeDir && window._snakeDir(dx,dy);
-console.log('%c게임 함수 등록 완료 ✅', 'color:#22c55e;font-size:12px');
+// 인증 함수
+window.switchAuthTab  = switchAuthTab;
+window.doLogin        = doLogin;
+window.doRegister     = doRegister;
+window.doLogout       = doLogout;
+console.log('%c게임/인증 함수 등록 완료 ✅', 'color:#22c55e;font-size:12px');
