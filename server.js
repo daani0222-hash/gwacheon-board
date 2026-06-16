@@ -66,8 +66,13 @@ async function syncFromDB() {
   rankingsData = await dbGet('rankings',   rankingsData);
   members      = await dbGet('members',    members);
   blockGames   = await dbGet('blockGames', blockGames);
+  accounts     = await dbGet('accounts',   accounts);
+  const sessObj = await dbGet('sessions',  {});
+  for (const [token, data] of Object.entries(sessObj)) {
+    if (data.exp > Date.now()) sessions.set(token, data);
+  }
   migrateLikes();
-  console.log(`[DB] 로드 완료 - 게시글 ${posts.length}개, 멤버 ${Object.keys(members).length}명`);
+  console.log(`[DB] 로드 완료 - 게시글 ${posts.length}개, 계정 ${accounts.length}개`);
 }
 
 const app = express();
@@ -125,7 +130,10 @@ const saveBlockGames = () => { saveJSON('block-games.json', blockGames); if (use
 
 // 회원 계정 (영구 저장)
 let accounts = loadJSON('accounts.json', []); // [{ id, username, passwordHash, salt, nickname, color, bio, avatarUrl, createdAt }]
-const saveAccounts = () => saveJSON('accounts.json', accounts);
+function saveAccounts() {
+  saveJSON('accounts.json', accounts);
+  if (useDB) dbSet('accounts', accounts).catch(() => {});
+}
 
 // 세션 (파일 영구 저장 — 서버 재시작해도 유지됨)
 const _sessionsRaw = loadJSON('sessions.json', {});
@@ -137,6 +145,7 @@ function saveSessions() {
     if (data.exp > Date.now()) obj[token] = data;
   }
   saveJSON('sessions.json', obj);
+  if (useDB) dbSet('sessions', obj).catch(() => {});
 }
 
 // 만료 세션 주기적 정리 (1시간)
