@@ -4620,4 +4620,160 @@ window.switchAuthTab  = switchAuthTab;
 window.doLogin        = doLogin;
 window.doRegister     = doRegister;
 window.doLogout       = doLogout;
-console.log('%c게임/인증 함수 등록 완료 ✅', 'color:#22c55e;font-size:12px');
+// AI 코딩
+window.aiSend         = aiSend;
+window.aiSetPrompt    = aiSetPrompt;
+window.aiSwitchTab    = aiSwitchTab;
+window.aiCopyCode     = aiCopyCode;
+window.aiDownload     = aiDownload;
+window.aiUpdatePreview = aiUpdatePreview;
+console.log('%c게임/인증/AI 함수 등록 완료 ✅', 'color:#22c55e;font-size:12px');
+
+// =============================================
+// AI 코딩 어시스턴트
+// =============================================
+let aiHistory = [];       // [{ role, content }]
+let aiCurrentCode = '';
+let aiCurrentTab = 'preview';
+
+function aiSetPrompt(text) {
+  const inp = $('aiPromptInput');
+  if (inp) { inp.value = text; inp.focus(); }
+}
+
+function aiSwitchTab(tab) {
+  aiCurrentTab = tab;
+  const isPreview = tab === 'preview';
+  $('aiTabPreview').classList.toggle('active', isPreview);
+  $('aiTabCode').classList.toggle('active', !isPreview);
+  $('aiPreviewFrame').classList.toggle('hidden', !isPreview);
+  $('aiCodeArea').classList.toggle('hidden', isPreview);
+  if (!isPreview && $('aiCodeEditor') && aiCurrentCode) {
+    $('aiCodeEditor').value = aiCurrentCode;
+  }
+}
+
+function aiUpdatePreview() {
+  const code = $('aiCodeEditor')?.value || '';
+  aiCurrentCode = code;
+  aiShowPreview(code);
+}
+
+function aiShowPreview(code) {
+  if (!code) return;
+  $('aiEmptyState').classList.add('hidden');
+  $('aiPreviewFrame').classList.remove('hidden');
+
+  const frame = $('aiPreviewFrame');
+  const blob = new Blob([code], { type: 'text/html; charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  frame.src = url;
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+  if ($('aiCodeEditor')) $('aiCodeEditor').value = code;
+}
+
+function aiAppendMsg(role, content) {
+  const container = $('aiMessages');
+  if (!container) return;
+
+  const welcome = container.querySelector('.ai-welcome');
+  if (welcome) welcome.remove();
+
+  const wrap = document.createElement('div');
+  wrap.className = role === 'user' ? 'ai-msg ai-msg-user' : 'ai-msg ai-msg-ai';
+
+  const bubble = document.createElement('div');
+  bubble.className = role === 'user' ? 'ai-bubble-user' : 'ai-bubble-ai';
+  bubble.textContent = content;
+
+  const time = document.createElement('div');
+  time.className = 'ai-msg-time';
+  time.textContent = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+
+  wrap.appendChild(bubble);
+  wrap.appendChild(time);
+  container.appendChild(wrap);
+  container.scrollTop = container.scrollHeight;
+  return wrap;
+}
+
+function aiShowLoading() {
+  const container = $('aiMessages');
+  if (!container) return null;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'ai-msg ai-msg-ai';
+  wrap.innerHTML = `
+    <div class="ai-bubble-loading">
+      <div class="ai-dots"><span></span><span></span><span></span></div>
+      코드 생성 중...
+    </div>`;
+  container.appendChild(wrap);
+  container.scrollTop = container.scrollHeight;
+  return wrap;
+}
+
+async function aiSend() {
+  const inp = $('aiPromptInput');
+  const prompt = inp?.value.trim();
+  if (!prompt) return;
+
+  const btn = $('aiSendBtn');
+  btn.disabled = true;
+  inp.value = '';
+
+  aiAppendMsg('user', prompt);
+  aiHistory.push({ role: 'user', content: prompt });
+
+  const loadingEl = aiShowLoading();
+
+  try {
+    const res = await fetch('/api/ai/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({ messages: aiHistory }),
+    });
+    const data = await res.json();
+
+    if (loadingEl) loadingEl.remove();
+
+    if (data.error) {
+      aiAppendMsg('ai', '❌ ' + data.error);
+      aiHistory.push({ role: 'assistant', content: data.error });
+      return;
+    }
+
+    const reply = (data.explanation || '코드를 생성했어요! 오른쪽에서 확인하세요 ✨');
+    aiAppendMsg('ai', reply);
+    aiHistory.push({ role: 'assistant', content: reply + '\n\n```html\n' + data.code + '\n```' });
+
+    if (data.code) {
+      aiCurrentCode = data.code;
+      aiShowPreview(data.code);
+      if (aiCurrentTab === 'code') $('aiCodeEditor').value = data.code;
+    }
+  } catch(e) {
+    if (loadingEl) loadingEl.remove();
+    aiAppendMsg('ai', '❌ 서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+  } finally {
+    btn.disabled = false;
+    inp.focus();
+  }
+}
+
+function aiCopyCode() {
+  if (!aiCurrentCode) { showToast('생성된 코드가 없습니다', 'error'); return; }
+  navigator.clipboard.writeText(aiCurrentCode).then(() => showToast('코드가 복사됐습니다!', 'success'));
+}
+
+function aiDownload() {
+  if (!aiCurrentCode) { showToast('생성된 코드가 없습니다', 'error'); return; }
+  const a = document.createElement('a');
+  const blob = new Blob([aiCurrentCode], { type: 'text/html' });
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ai-code.html';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  showToast('HTML 파일 저장됨!', 'success');
+}

@@ -1176,6 +1176,88 @@ if (process.env.RENDER_EXTERNAL_URL) {
 }
 
 // =============================================
+// AI 코드 생성
+// =============================================
+const AI_SYSTEM = `당신은 창의적인 웹 코드를 생성하는 AI 어시스턴트입니다.
+사용자가 원하는 것을 설명하면 즉시 실행 가능한 완전한 HTML 파일을 생성합니다.
+
+규칙:
+1. 반드시 <!DOCTYPE html>부터 시작하는 완전한 HTML 파일로 작성
+2. CSS는 <style> 태그 안에, JS는 </body> 직전 <script> 태그 안에
+3. CDN 외부 라이브러리 자유롭게 사용 가능 (Three.js, p5.js, Chart.js, anime.js 등)
+4. 한국어 텍스트와 주석 사용
+5. 시각적으로 아름답고 완성도 있게 만들기
+6. 색상, 애니메이션, 폰트에 신경 쓰기
+7. 코드는 \`\`\`html ... \`\`\` 블록 안에만 넣기
+
+응답 형식 (반드시 이 형식 준수):
+한 줄 설명
+
+\`\`\`html
+[완전한 HTML 코드]
+\`\`\``;
+
+async function callClaude(messages) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다');
+
+  const body = JSON.stringify({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 4096,
+    system: AI_SYSTEM,
+    messages,
+  });
+
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.anthropic.com',
+      path: '/v1/messages',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch(e) { reject(new Error('응답 파싱 실패: ' + data.slice(0, 200))); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+app.post('/api/ai/generate', async (req, res) => {
+  const { messages } = req.body || {};
+  if (!Array.isArray(messages) || messages.length === 0)
+    return res.json({ error: '메시지를 입력해주세요' });
+
+  if (!process.env.ANTHROPIC_API_KEY)
+    return res.json({ error: 'AI 기능을 사용하려면 서버에 ANTHROPIC_API_KEY 환경변수를 설정하세요.\n(Render → Environment 탭에서 추가)' });
+
+  try {
+    const result = await callClaude(messages);
+    if (result.error) return res.json({ error: result.error.message || 'AI 오류' });
+
+    const text = result.content?.[0]?.text || '';
+    const codeMatch = text.match(/```html?\n([\s\S]*?)```/);
+    const code = codeMatch ? codeMatch[1].trim() : '';
+    const explanation = text.replace(/```html?[\s\S]*?```/g, '').trim();
+
+    res.json({ success: true, code, explanation });
+  } catch(e) {
+    console.error('[AI]', e.message);
+    res.json({ error: e.message });
+  }
+});
+
+// =============================================
 // 서버 시작
 // =============================================
 // MongoDB 초기화 후 서버 시작

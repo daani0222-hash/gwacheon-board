@@ -12,7 +12,7 @@
   <meta property="og:url" content="https://gwacheon-board.onrender.com" />
   <meta property="og:type" content="website" />
   <link rel="canonical" href="https://gwacheon-board.onrender.com" />
-  <link rel="stylesheet" href="/style.css?v=205" />
+  <link rel="stylesheet" href="/style.css?v=206" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" />
 </head>
 <body>
@@ -297,6 +297,9 @@
         </a>
         <a class="nav-item" data-view="profile" onclick="switchView('profile')">
           <i class="fa-solid fa-user"></i><span>내 프로필</span>
+        </a>
+        <a class="nav-item" data-view="ai" onclick="switchView('ai')">
+          <i class="fa-solid fa-wand-magic-sparkles"></i><span>AI 코딩</span>
         </a>
       </nav>
 
@@ -840,6 +843,76 @@
         </div>
       </div>
 
+      <!-- AI 코딩 -->
+      <div id="view-ai" class="view">
+        <div class="ai-coder">
+          <!-- 왼쪽: 채팅 -->
+          <div class="ai-chat-panel">
+            <div class="ai-chat-header">
+              <div class="ai-header-icon">✨</div>
+              <div>
+                <div class="ai-header-title">AI 코딩 어시스턴트</div>
+                <div class="ai-header-sub">원하는 것을 설명하면 코드를 만들어드려요</div>
+              </div>
+            </div>
+            <div class="ai-messages" id="aiMessages">
+              <div class="ai-welcome">
+                <div class="ai-welcome-icon">🤖</div>
+                <div class="ai-welcome-title">무엇을 만들까요?</div>
+                <div class="ai-welcome-desc">아래에 원하는 것을 설명해보세요!</div>
+                <div class="ai-examples">
+                  <button class="ai-example-btn" onclick="aiSetPrompt('별들이 떨어지는 밤하늘 애니메이션')">🌠 별 떨어지는 애니메이션</button>
+                  <button class="ai-example-btn" onclick="aiSetPrompt('마우스를 따라다니는 귀여운 고양이')">🐱 마우스 따라다니는 고양이</button>
+                  <button class="ai-example-btn" onclick="aiSetPrompt('클릭하면 불꽃이 터지는 이펙트')">🎆 클릭 불꽃 이펙트</button>
+                  <button class="ai-example-btn" onclick="aiSetPrompt('뱀 게임 만들어줘')">🐍 뱀 게임</button>
+                  <button class="ai-example-btn" onclick="aiSetPrompt('피아노 건반 눌러서 소리나는 앱')">🎹 피아노 앱</button>
+                  <button class="ai-example-btn" onclick="aiSetPrompt('무지개 색으로 글씨 쓰는 그림판')">🎨 무지개 그림판</button>
+                </div>
+              </div>
+            </div>
+            <div class="ai-input-area">
+              <textarea id="aiPromptInput" class="ai-input" placeholder="예: 공이 화면에서 튕기는 애니메이션 만들어줘" rows="3" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();aiSend()}"></textarea>
+              <div class="ai-input-bottom">
+                <span class="ai-hint">Shift+Enter 줄바꿈 · Enter 전송</span>
+                <button class="ai-send-btn" id="aiSendBtn" onclick="aiSend()">
+                  <i class="fa-solid fa-paper-plane"></i> 생성
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 오른쪽: 미리보기 + 코드 -->
+          <div class="ai-output-panel">
+            <div class="ai-output-tabs">
+              <button class="ai-tab active" id="aiTabPreview" onclick="aiSwitchTab('preview')">
+                <i class="fa-solid fa-eye"></i> 미리보기
+              </button>
+              <button class="ai-tab" id="aiTabCode" onclick="aiSwitchTab('code')">
+                <i class="fa-solid fa-code"></i> 코드
+              </button>
+              <div style="flex:1"></div>
+              <button class="ai-copy-btn" id="aiCopyBtn" onclick="aiCopyCode()" title="코드 복사">
+                <i class="fa-solid fa-copy"></i> 복사
+              </button>
+              <a class="ai-copy-btn" id="aiDownloadBtn" onclick="aiDownload()" title="HTML 파일 다운로드" style="cursor:pointer">
+                <i class="fa-solid fa-download"></i> 저장
+              </a>
+            </div>
+            <div class="ai-output-body">
+              <div class="ai-empty-state" id="aiEmptyState">
+                <div style="font-size:48px">✨</div>
+                <div style="font-size:16px;font-weight:700;margin:8px 0">코드가 여기에 표시됩니다</div>
+                <div style="font-size:13px;color:var(--text-3)">왼쪽에서 원하는 것을 설명해보세요</div>
+              </div>
+              <iframe id="aiPreviewFrame" class="ai-preview hidden" sandbox="allow-scripts allow-same-origin"></iframe>
+              <div id="aiCodeArea" class="ai-code-area hidden">
+                <textarea id="aiCodeEditor" class="ai-code-editor" spellcheck="false" oninput="aiUpdatePreview()"></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 프로필 -->
       <div id="view-profile" class="view">
         <div class="profile-page">
@@ -911,6 +984,6 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/app.js?v=205"></script>
+  <script src="/app.js?v=206"></script>
 </body>
 </html>
