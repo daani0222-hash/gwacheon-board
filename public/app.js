@@ -4109,14 +4109,480 @@ function scMakeAddSel(parentId, toElse, color) {
 
 function openBlockCoder() {
   $('bcModal').classList.remove('hidden');
-  scInitEditor();
-  bcRenderScript();
-  bcDrawPreview();
+  bcSwitchMode('beginner');
 }
 
 function closeBlockCoder() {
   bcStop();
+  bcBegStop();
+  bcStageExpanded = false;
+  document.querySelector('.scratch-ide')?.classList.remove('stage-fullscreen');
   $('bcModal').classList.add('hidden');
+}
+
+// =============================================
+// 블록코딩 모드 전환
+// =============================================
+let bcMode = 'beginner';
+let bcStageExpanded = false;
+
+function bcSwitchMode(mode) {
+  bcMode = mode;
+  bcBegStop();
+  if (mode !== 'expert') bcStop();
+
+  const begEl = $('bc-beginner');
+  const expEl = $('bc-expert');
+  const tabBeg = $('bcModeTabBeg');
+  const tabExp = $('bcModeTabExp');
+  const runBtn = $('bcRunBtn');
+  const stopBtn = $('bcStopBtn');
+  const submitBtn = $('bcSubmitBtn');
+  const clearBtn = $('bcClearBtn');
+
+  if (mode === 'beginner') {
+    begEl.classList.remove('hidden');
+    expEl.classList.add('hidden');
+    tabBeg.classList.add('active');
+    tabExp.classList.remove('active');
+    if (runBtn) runBtn.style.display = 'none';
+    if (stopBtn) stopBtn.style.display = 'none';
+    if (submitBtn) submitBtn.style.display = 'none';
+    if (clearBtn) clearBtn.style.display = 'none';
+    bcRenderBegZone();
+  } else {
+    begEl.classList.add('hidden');
+    expEl.classList.remove('hidden');
+    tabBeg.classList.remove('active');
+    tabExp.classList.add('active');
+    if (runBtn) runBtn.style.display = '';
+    if (submitBtn) submitBtn.style.display = '';
+    if (clearBtn) clearBtn.style.display = '';
+    scInitEditor();
+    bcRenderScript();
+    bcDrawPreview();
+  }
+}
+
+function bcToggleStage() {
+  bcStageExpanded = !bcStageExpanded;
+  const ide = document.querySelector('.scratch-ide');
+  const btn = $('bcExpandBtn');
+  ide.classList.toggle('stage-fullscreen', bcStageExpanded);
+  if (btn) { btn.textContent = bcStageExpanded ? '⤡' : '⤢'; btn.title = bcStageExpanded ? '스테이지 축소' : '스테이지 확대'; }
+  bcDrawPreview();
+}
+
+// =============================================
+// 초보코딩존
+// =============================================
+const BC_TEMPLATES = [
+  { id:'runner',  name:'달리기 게임',    emoji:'🏃', bg:'#87ceeb', desc:'스페이스/클릭으로 점프! 장애물을 피해요.' },
+  { id:'catch',   name:'별 먹기',        emoji:'⭐', bg:'#0a0a2e', desc:'방향키로 이동해 떨어지는 별을 잡아요!' },
+  { id:'dodge',   name:'운석 피하기',    emoji:'🚀', bg:'#0a0a2e', desc:'방향키로 움직여 날아오는 운석을 피해요!' },
+  { id:'fish',    name:'물고기 잡기',    emoji:'🐟', bg:'#1a6fa0', desc:'클릭해서 지나가는 물고기를 잡아요!' },
+  { id:'balloon', name:'풍선 터뜨리기',  emoji:'🎈', bg:'#e8d5f5', desc:'클릭해서 올라오는 풍선을 터뜨려요!' },
+  { id:'survive', name:'피하기 게임',    emoji:'😎', bg:'#1a1a2e', desc:'방향키로 움직여 떨어지는 공을 피해요!' },
+];
+const BC_BEG_CHARS = [
+  { id:'cat',emoji:'🐱' },{ id:'dog',emoji:'🐶' },{ id:'duck',emoji:'🦆' },
+  { id:'bear',emoji:'🐻' },{ id:'bunny',emoji:'🐰' },{ id:'tiger',emoji:'🐯' },
+  { id:'person',emoji:'🧍' },{ id:'robot',emoji:'🤖' },{ id:'rocket',emoji:'🚀' },
+  { id:'star',emoji:'⭐' },
+];
+const BC_BEG_BGS = [
+  ['#87ceeb','하늘'],['#0a0a2e','우주'],['#1a6fa0','바다'],
+  ['#1a3a1a','숲'],['#f4e4a1','사막'],['#e8d5f5','분홍'],
+];
+
+let bcBegTemplate = 'runner';
+let bcBegRunning = false;
+let bcBegRAF = null;
+let bcBegKeyState = {};
+let bcBegKeydownH = null;
+let bcBegKeyupH = null;
+let bcBegClickH = null;
+let bcBegSettings = { char: 'cat', speed: 5, bg: '#87ceeb' };
+
+function bcRenderBegZone() {
+  const zone = $('bc-beginner');
+  if (!zone) return;
+  const tpl = BC_TEMPLATES.find(t => t.id === bcBegTemplate) || BC_TEMPLATES[0];
+  const charEmoji = BC_BEG_CHARS.find(c => c.id === bcBegSettings.char)?.emoji || '🐱';
+
+  zone.innerHTML = `
+  <div class="bc-beg-layout">
+    <div class="bc-tpl-grid">
+      ${BC_TEMPLATES.map(t => `
+        <div class="bc-tpl-card${t.id===bcBegTemplate?' active':''}" onclick="bcBegSelectTpl('${t.id}')">
+          <div class="bc-tpl-emoji">${t.emoji}</div>
+          <div class="bc-tpl-name">${t.name}</div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="bc-beg-right">
+      <div class="bc-beg-info">
+        <div class="bc-beg-info-emoji">${tpl.emoji}</div>
+        <div>
+          <div class="bc-beg-info-name">${tpl.name}</div>
+          <div class="bc-beg-info-desc">${tpl.desc}</div>
+        </div>
+      </div>
+      <div class="bc-beg-settings">
+        <div class="bc-beg-setting-row">
+          <label>캐릭터</label>
+          <div class="bc-beg-char-grid">
+            ${BC_BEG_CHARS.map(c=>`<div class="bc-beg-char${c.id===bcBegSettings.char?' active':''}" onclick="bcBegSetChar('${c.id}')" title="${c.id}">${c.emoji}</div>`).join('')}
+          </div>
+        </div>
+        <div class="bc-beg-setting-row">
+          <label>속도</label>
+          <input type="range" min="1" max="10" value="${bcBegSettings.speed}" oninput="bcBegSetSpeed(this.value)" class="bc-beg-slider">
+          <span class="bc-beg-speed-val" id="bcBegSpeedVal">${bcBegSettings.speed}</span>
+        </div>
+        <div class="bc-beg-setting-row">
+          <label>배경</label>
+          <div class="bc-beg-bg-list">
+            ${BC_BEG_BGS.map(([c,n])=>`<div class="bc-beg-bg${bcBegSettings.bg===c?' active':''}" style="background:${c}" onclick="bcBegSetBg('${c}')" title="${n}"></div>`).join('')}
+            <label class="bc-beg-bg" style="background:#555;font-size:14px;position:relative" title="직접 선택">🎨<input type="color" value="${bcBegSettings.bg}" onchange="bcBegSetBg(this.value)" style="opacity:0;width:0;height:0;position:absolute"></label>
+          </div>
+        </div>
+      </div>
+      <div class="bc-beg-canvas-wrap">
+        <canvas id="bcBegCanvas" width="400" height="260" class="bc-beg-canvas" onclick="bcBegCanvasClick(event)"></canvas>
+        <div class="bc-beg-ctrl">
+          <button class="bc-beg-run-btn" id="bcBegRunBtn" onclick="bcBegRun()">▶ 실행</button>
+          <button class="bc-beg-stop-btn" id="bcBegStopBtn" onclick="bcBegStop()" style="display:none">■ 정지</button>
+          <span class="bc-beg-score-el" id="bcBegScoreEl">점수: 0</span>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  bcBegPreview();
+}
+
+function bcBegSelectTpl(id) {
+  bcBegTemplate = id;
+  const tpl = BC_TEMPLATES.find(t=>t.id===id);
+  if (tpl) bcBegSettings.bg = tpl.bg;
+  bcBegStop();
+  bcRenderBegZone();
+}
+function bcBegSetChar(id) { bcBegSettings.char = id; bcBegStop(); bcRenderBegZone(); }
+function bcBegSetSpeed(v) {
+  bcBegSettings.speed = parseInt(v);
+  const el = $('bcBegSpeedVal'); if (el) el.textContent = v;
+}
+function bcBegSetBg(c) { bcBegSettings.bg = c; bcBegStop(); bcRenderBegZone(); }
+function bcBegGetEmoji() { return BC_BEG_CHARS.find(c=>c.id===bcBegSettings.char)?.emoji || '🐱'; }
+
+function bcBegCanvasClick(e) {
+  if (!bcBegRunning) bcBegRun();
+}
+
+function bcBegPreview() {
+  const cv = $('bcBegCanvas'); if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const W=cv.width, H=cv.height;
+  ctx.fillStyle = bcBegSettings.bg; ctx.fillRect(0,0,W,H);
+  const emoji = bcBegGetEmoji();
+  const tpl = BC_TEMPLATES.find(t=>t.id===bcBegTemplate);
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+
+  if (bcBegTemplate==='runner') {
+    ctx.fillStyle='#5d4037'; ctx.fillRect(0,H-36,W,36);
+    ctx.fillStyle='#4caf50'; ctx.fillRect(0,H-38,W,4);
+    ctx.font='38px serif'; ctx.fillText(emoji,80,H-58);
+    ctx.fillStyle='#e53935'; ctx.fillRect(290,H-38-36,24,36);
+    ctx.fillStyle='#e53935'; ctx.fillRect(330,H-38-22,20,22);
+  } else if (bcBegTemplate==='catch') {
+    ctx.font='36px serif'; ctx.fillText(emoji,W/2,H-34);
+    ctx.font='28px serif'; ctx.fillText('⭐',W/2-80,60); ctx.fillText('🌟',W/2,40); ctx.fillText('✨',W/2+80,80);
+  } else if (bcBegTemplate==='dodge') {
+    ctx.font='36px serif'; ctx.fillText(emoji,60,H/2);
+    ctx.font='28px serif'; ctx.fillText('🪨',280,H/2-40); ctx.fillText('☄️',340,H/2+20); ctx.fillText('💥',300,H/2+70);
+  } else if (bcBegTemplate==='fish') {
+    ctx.fillStyle='rgba(255,255,255,0.1)';
+    for(let i=0;i<4;i++) ctx.fillRect(0,50+i*55,W,3);
+    ctx.font='36px serif'; ctx.fillText('🐟',120,90); ctx.fillText('🐠',280,140); ctx.fillText('🐡',160,200);
+  } else if (bcBegTemplate==='balloon') {
+    ctx.font='40px serif'; ctx.fillText('🎈',140,130); ctx.fillText('🎈',260,90); ctx.fillText('🎃',200,170);
+  } else if (bcBegTemplate==='survive') {
+    ctx.font='36px serif'; ctx.fillText(emoji,W/2,H-34);
+    ctx.font='30px serif'; ctx.fillText('💣',W/2-60,70); ctx.fillText('🪨',W/2+40,110); ctx.fillText('💥',W/2-20,40);
+  }
+  ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(W/2-110,H/2-20,220,40);
+  ctx.fillStyle='#fff'; ctx.font='bold 14px sans-serif'; ctx.fillText('▶ 실행 버튼을 눌러 시작!',W/2,H/2);
+}
+
+function bcBegRun() {
+  if (bcBegRunning) return;
+  bcBegRunning = true;
+  bcBegKeyState = {};
+  const runBtn=$('bcBegRunBtn'), stopBtn=$('bcBegStopBtn');
+  if (runBtn) runBtn.style.display='none';
+  if (stopBtn) stopBtn.style.display='';
+  bcBegUpdateScore(0);
+  bcBegKeydownH = e => { bcBegKeyState[e.code]=true; if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault(); };
+  bcBegKeyupH = e => { bcBegKeyState[e.code]=false; };
+  document.addEventListener('keydown', bcBegKeydownH);
+  document.addEventListener('keyup', bcBegKeyupH);
+  switch(bcBegTemplate) {
+    case 'runner':  bcBegGameRunner(); break;
+    case 'catch':   bcBegGameCatch(); break;
+    case 'dodge':   bcBegGameDodge(); break;
+    case 'fish':    bcBegGameFish(); break;
+    case 'balloon': bcBegGameBalloon(); break;
+    case 'survive': bcBegGameSurvive(); break;
+  }
+}
+
+function bcBegStop() {
+  bcBegRunning = false;
+  if (bcBegRAF) { cancelAnimationFrame(bcBegRAF); bcBegRAF = null; }
+  if (bcBegKeydownH) { document.removeEventListener('keydown', bcBegKeydownH); bcBegKeydownH=null; }
+  if (bcBegKeyupH) { document.removeEventListener('keyup', bcBegKeyupH); bcBegKeyupH=null; }
+  const cv=$('bcBegCanvas');
+  if (cv && bcBegClickH) { cv.removeEventListener('click', bcBegClickH); bcBegClickH=null; }
+  const runBtn=$('bcBegRunBtn'), stopBtn=$('bcBegStopBtn');
+  if (runBtn) runBtn.style.display='';
+  if (stopBtn) stopBtn.style.display='none';
+}
+
+function bcBegUpdateScore(s) {
+  const el=$('bcBegScoreEl'); if(el) el.textContent=`점수: ${s}`;
+}
+
+function bcBegGameOver(score) {
+  bcBegRunning = false;
+  if (bcBegRAF) { cancelAnimationFrame(bcBegRAF); bcBegRAF=null; }
+  if (bcBegKeydownH) { document.removeEventListener('keydown', bcBegKeydownH); bcBegKeydownH=null; }
+  if (bcBegKeyupH) { document.removeEventListener('keyup', bcBegKeyupH); bcBegKeyupH=null; }
+  const cv=$('bcBegCanvas'); if(!cv) return;
+  const ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  ctx.fillStyle='rgba(0,0,0,0.65)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle='#fff'; ctx.font='bold 30px sans-serif'; ctx.fillText('게임 오버!',W/2,H/2-22);
+  ctx.font='18px sans-serif'; ctx.fillText(`최종 점수: ${score}`,W/2,H/2+14);
+  ctx.font='12px sans-serif'; ctx.fillStyle='rgba(255,255,255,.7)'; ctx.fillText('▶ 실행 버튼으로 재시작',W/2,H/2+44);
+  const runBtn=$('bcBegRunBtn'), stopBtn=$('bcBegStopBtn');
+  if (runBtn) runBtn.style.display='';
+  if (stopBtn) stopBtn.style.display='none';
+}
+
+// ─── 달리기 게임 ────────────────────────────────
+function bcBegGameRunner() {
+  const cv=$('bcBegCanvas'); if(!cv) return;
+  const ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  const sp=bcBegSettings.speed, emoji=bcBegGetEmoji();
+  const GROUND=H-44;
+  let cy=GROUND, vy=0, onGnd=true;
+  let obs=[], frame=0, score=0;
+  let ospd=2.5+sp*0.5, ospawn=Math.max(35,110-sp*6);
+  const jump=()=>{ if(onGnd){vy=-13;onGnd=false;} };
+  bcBegClickH=jump; cv.addEventListener('click',bcBegClickH);
+  function loop(){
+    if(!bcBegRunning)return;
+    frame++;
+    if(bcBegKeyState['Space']||bcBegKeyState['ArrowUp']||bcBegKeyState['KeyW']) jump();
+    vy+=0.7; cy+=vy;
+    if(cy>=GROUND){cy=GROUND;vy=0;onGnd=true;}
+    if(frame%ospawn===0) obs.push({x:W,h:18+Math.random()*36});
+    obs.forEach(o=>o.x-=ospd);
+    obs=obs.filter(o=>o.x>-30);
+    for(const o of obs){
+      if(o.x<105&&o.x+22>52&&cy>GROUND-o.h-8){bcBegGameOver(score);return;}
+    }
+    if(frame%300===0) ospd+=0.25;
+    score=Math.floor(frame/10); bcBegUpdateScore(score);
+    // draw
+    ctx.fillStyle=bcBegSettings.bg; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#5d4037'; ctx.fillRect(0,GROUND+30,W,14);
+    ctx.fillStyle='#4caf50'; ctx.fillRect(0,GROUND+28,W,4);
+    ctx.fillStyle='#e53935';
+    obs.forEach(o=>{ ctx.beginPath(); ctx.roundRect(o.x,GROUND+28-o.h,22,o.h,3); ctx.fill(); });
+    ctx.font='38px serif'; ctx.textAlign='center'; ctx.textBaseline='bottom';
+    ctx.fillText(emoji,78,cy+32);
+    _bcBegHud(ctx,score,W);
+    bcBegRAF=requestAnimationFrame(loop);
+  }
+  loop();
+}
+
+// ─── 별 먹기 ────────────────────────────────────
+function bcBegGameCatch() {
+  const cv=$('bcBegCanvas'); if(!cv) return;
+  const ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  const sp=bcBegSettings.speed, emoji=bcBegGetEmoji();
+  let cx=W/2, stars=[], frame=0, score=0;
+  const cspd=3.5+sp*0.45, fspd=1.2+sp*0.28;
+  function loop(){
+    if(!bcBegRunning)return;
+    frame++;
+    if(bcBegKeyState['ArrowLeft']||bcBegKeyState['KeyA']) cx=Math.max(20,cx-cspd);
+    if(bcBegKeyState['ArrowRight']||bcBegKeyState['KeyD']) cx=Math.min(W-20,cx+cspd);
+    if(frame%38===0) stars.push({x:20+Math.random()*(W-40),y:-20,e:['⭐','🌟','✨'][frame%3]});
+    stars.forEach(s=>s.y+=fspd);
+    stars=stars.filter(s=>{
+      if(s.y>H) return false;
+      if(Math.abs(s.x-cx)<28&&Math.abs(s.y-(H-36))<28){score++;bcBegUpdateScore(score);return false;}
+      return true;
+    });
+    ctx.fillStyle=bcBegSettings.bg; ctx.fillRect(0,0,W,H);
+    // stars bg
+    ctx.fillStyle='rgba(255,255,255,0.15)';
+    for(let i=0;i<20;i++) ctx.fillRect((i*61+frame*0.3)%W,(i*47)%H,1.5,1.5);
+    ctx.font='28px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    stars.forEach(s=>ctx.fillText(s.e,s.x,s.y));
+    ctx.font='38px serif'; ctx.fillText(emoji,cx,H-36);
+    _bcBegHud(ctx,score,W);
+    bcBegRAF=requestAnimationFrame(loop);
+  }
+  loop();
+}
+
+// ─── 운석 피하기 ────────────────────────────────
+function bcBegGameDodge() {
+  const cv=$('bcBegCanvas'); if(!cv) return;
+  const ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  const sp=bcBegSettings.speed, emoji=bcBegGetEmoji();
+  let cx=70, cy=H/2, meteors=[], frame=0, score=0;
+  const cspd=3+sp*0.4, mspd=1.8+sp*0.5;
+  const msp=Math.max(18,65-sp*4);
+  function loop(){
+    if(!bcBegRunning)return;
+    frame++;
+    if(bcBegKeyState['ArrowUp']||bcBegKeyState['KeyW']) cy=Math.max(22,cy-cspd);
+    if(bcBegKeyState['ArrowDown']||bcBegKeyState['KeyS']) cy=Math.min(H-22,cy+cspd);
+    if(bcBegKeyState['ArrowRight']||bcBegKeyState['KeyD']) cx=Math.min(W/2,cx+cspd);
+    if(bcBegKeyState['ArrowLeft']||bcBegKeyState['KeyA']) cx=Math.max(22,cx-cspd);
+    if(frame%msp===0) meteors.push({x:W+20,y:20+Math.random()*(H-40),e:['🪨','☄️','💥'][frame%3]});
+    meteors.forEach(m=>m.x-=mspd);
+    meteors=meteors.filter(m=>m.x>-40);
+    for(const m of meteors){if(Math.abs(m.x-cx)<26&&Math.abs(m.y-cy)<26){bcBegGameOver(score);return;}}
+    score=Math.floor(frame/10); bcBegUpdateScore(score);
+    if(frame%300===0) mspd;
+    ctx.fillStyle=bcBegSettings.bg; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='rgba(255,255,255,0.18)';
+    for(let i=0;i<25;i++) ctx.fillRect((i*79+frame*0.4)%W,(i*53)%H,1.5,1.5);
+    ctx.font='28px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    meteors.forEach(m=>ctx.fillText(m.e,m.x,m.y));
+    ctx.font='38px serif'; ctx.fillText(emoji,cx,cy);
+    _bcBegHud(ctx,score,W);
+    bcBegRAF=requestAnimationFrame(loop);
+  }
+  loop();
+}
+
+// ─── 물고기 잡기 ────────────────────────────────
+function bcBegGameFish() {
+  const cv=$('bcBegCanvas'); if(!cv) return;
+  const ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  const sp=bcBegSettings.speed;
+  let fish=[], frame=0, score=0, fid=0;
+  const fspd=0.6+sp*0.22;
+  const spawnI=Math.max(30,100-sp*7);
+  bcBegClickH=(e)=>{
+    const r=cv.getBoundingClientRect();
+    const mx=(e.clientX-r.left)*(W/r.width), my=(e.clientY-r.top)*(H/r.height);
+    fish=fish.filter(f=>{
+      if(Math.abs(f.x-mx)<28&&Math.abs(f.y-my)<28){score++;bcBegUpdateScore(score);return false;}
+      return true;
+    });
+  };
+  cv.addEventListener('click',bcBegClickH);
+  function spawn(){
+    const fromL=Math.random()>0.5;
+    fish.push({id:fid++,x:fromL?-30:W+30,y:30+Math.random()*(H-60),dx:fromL?fspd:-fspd,e:['🐟','🐠','🐡','🐙','🦑'][fid%5],life:160+Math.random()*80});
+  }
+  function loop(){
+    if(!bcBegRunning)return;
+    frame++;
+    if(frame%spawnI===0) spawn();
+    fish.forEach(f=>{f.x+=f.dx;f.life--;});
+    fish=fish.filter(f=>f.life>0&&f.x>-60&&f.x<W+60);
+    ctx.fillStyle=bcBegSettings.bg; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='rgba(255,255,255,0.1)';
+    for(let i=0;i<5;i++) ctx.fillRect(0,30+i*48+Math.sin(frame*0.04+i)*6,W,3);
+    ctx.font='34px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    fish.forEach(f=>{
+      ctx.save();
+      if(f.dx<0){ctx.scale(-1,1);ctx.translate(-W,0);ctx.fillText(f.e,W-f.x,f.y);}
+      else ctx.fillText(f.e,f.x,f.y);
+      ctx.restore();
+    });
+    _bcBegHud(ctx,score,W);
+    bcBegRAF=requestAnimationFrame(loop);
+  }
+  loop();
+}
+
+// ─── 풍선 터뜨리기 ──────────────────────────────
+function bcBegGameBalloon() {
+  const cv=$('bcBegCanvas'); if(!cv) return;
+  const ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  const sp=bcBegSettings.speed;
+  let balls=[], frame=0, score=0;
+  const rspd=0.5+sp*0.22;
+  const spawnI=Math.max(30,90-sp*7);
+  bcBegClickH=(e)=>{
+    const r=cv.getBoundingClientRect();
+    const mx=(e.clientX-r.left)*(W/r.width), my=(e.clientY-r.top)*(H/r.height);
+    balls=balls.filter(b=>{
+      if(Math.abs(b.x-mx)<30&&Math.abs(b.y-my)<34){score++;bcBegUpdateScore(score);return false;}
+      return true;
+    });
+  };
+  cv.addEventListener('click',bcBegClickH);
+  function loop(){
+    if(!bcBegRunning)return;
+    frame++;
+    if(frame%spawnI===0) balls.push({x:30+Math.random()*(W-60),y:H+30,dx:(Math.random()-0.5)*1.5,e:['🎈','🎃','🎄','🎊','🎆'][frame%5]});
+    balls.forEach(b=>{b.y-=rspd;b.x+=b.dx;});
+    balls=balls.filter(b=>b.y>-50);
+    ctx.fillStyle=bcBegSettings.bg; ctx.fillRect(0,0,W,H);
+    ctx.font='38px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    balls.forEach(b=>ctx.fillText(b.e,b.x,b.y));
+    _bcBegHud(ctx,score,W);
+    bcBegRAF=requestAnimationFrame(loop);
+  }
+  loop();
+}
+
+// ─── 피하기 게임 ────────────────────────────────
+function bcBegGameSurvive() {
+  const cv=$('bcBegCanvas'); if(!cv) return;
+  const ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  const sp=bcBegSettings.speed, emoji=bcBegGetEmoji();
+  let cx=W/2, bombs=[], frame=0, score=0;
+  const cspd=4+sp*0.5, bspd=1.8+sp*0.4;
+  const spawnI=Math.max(25,70-sp*5);
+  function loop(){
+    if(!bcBegRunning)return;
+    frame++;
+    if(bcBegKeyState['ArrowLeft']||bcBegKeyState['KeyA']) cx=Math.max(22,cx-cspd);
+    if(bcBegKeyState['ArrowRight']||bcBegKeyState['KeyD']) cx=Math.min(W-22,cx+cspd);
+    if(frame%spawnI===0) bombs.push({x:20+Math.random()*(W-40),y:-20,e:['💣','🪨','💥'][frame%3]});
+    bombs.forEach(b=>b.y+=bspd);
+    for(const b of bombs){if(Math.abs(b.x-cx)<26&&Math.abs(b.y-(H-34))<26){bcBegGameOver(score);return;}}
+    bombs=bombs.filter(b=>b.y<H+40);
+    score=Math.floor(frame/10); bcBegUpdateScore(score);
+    ctx.fillStyle=bcBegSettings.bg; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='rgba(255,255,255,0.1)';
+    for(let i=0;i<20;i++) ctx.fillRect((i*83+frame*0.3)%W,(i*57)%H,1.5,1.5);
+    ctx.font='30px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    bombs.forEach(b=>ctx.fillText(b.e,b.x,b.y));
+    ctx.font='38px serif'; ctx.fillText(emoji,cx,H-34);
+    _bcBegHud(ctx,score,W);
+    bcBegRAF=requestAnimationFrame(loop);
+  }
+  loop();
+}
+
+function _bcBegHud(ctx,score,W) {
+  ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(4,4,86,24);
+  ctx.fillStyle='#fff'; ctx.font='bold 12px sans-serif';
+  ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillText(`점수: ${score}`,10,9);
 }
 
 // ---- Background ----
@@ -4611,6 +5077,15 @@ window.leaveGameRoom    = leaveGameRoom;
 window.switchView       = switchView;
 window.openBlockCoder   = openBlockCoder;
 window.closeBlockCoder  = closeBlockCoder;
+window.bcSwitchMode     = bcSwitchMode;
+window.bcToggleStage    = bcToggleStage;
+window.bcBegSelectTpl   = bcBegSelectTpl;
+window.bcBegSetChar     = bcBegSetChar;
+window.bcBegSetSpeed    = bcBegSetSpeed;
+window.bcBegSetBg       = bcBegSetBg;
+window.bcBegRun         = bcBegRun;
+window.bcBegStop        = bcBegStop;
+window.bcBegCanvasClick = bcBegCanvasClick;
 window.loadUserGames    = loadUserGames;
 window.openUserGame     = openUserGame;
 window.closeUserGame    = closeUserGame;
