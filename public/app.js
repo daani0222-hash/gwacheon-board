@@ -1,7 +1,7 @@
 /**
- * app.js - 과천중 비밀게시판 클라이언트 v2.03
+ * app.js - 과천중 비밀게시판 클라이언트 v2.09
  */
-console.log('%c과천중 게임존 v2.03 로드됨 ✅', 'color:#6366f1;font-weight:bold;font-size:14px');
+console.log('%c과천중 게임존 v2.09 로드됨 ✅', 'color:#6366f1;font-weight:bold;font-size:14px');
 
 // =============================================
 // 인증 토큰
@@ -3945,11 +3945,13 @@ const KEY_MAP = { '오른쪽':'ArrowRight','왼쪽':'ArrowLeft','위':'ArrowUp',
 const COND_MAP = { right_key:'오른쪽 키',left_key:'왼쪽 키',up_key:'위 키',down_key:'아래 키',space_key:'스페이스',a_key:'A 키',s_key:'S 키',d_key:'D 키',w_key:'W 키',edge:'벽에 닿음',mouse_down:'마우스 클릭' };
 
 let bcScript = [];
-let bcSprite  = { x:240, y:180, w:40, h:40, color:'#3b82f6', shape:'emoji', emoji:'🐱', visible:true, velX:0, velY:0, label:'', dir:90, say:null, baseSize:40 };
+// New drag-drop workspace: array of stacks {id, x, y, blocks:[...]}
+let bcWorkspace = [];
+let bcSprite  = { x:240, y:180, w:50, h:50, color:'#f5a623', shape:'cat', emoji:'🐱', visible:true, velX:0, velY:0, label:'', dir:90, say:null, baseSize:50 };
 let bcBgColor = '#87ceeb';
 let bcBgScene = 'color'; // 'color' | scene_id | 'custom'
-let bcCustomBgImg = null; // Image object
-let bcCustomSpriteImg = null; // Image object
+let bcCustomBgImg = null;
+let bcCustomSpriteImg = null;
 let bcRuntime = null;
 let bcVars = {}, bcShownVars = new Set();
 let _bcIdCounter = 0;
@@ -3958,10 +3960,13 @@ let _bcBroadcastBus = {};
 let _bcVolume = 1.0;
 const bcId = () => 'blk' + (++_bcIdCounter);
 
+// Drag state for workspace
+let _bcDrag = null;
+// { type:'palette'|'stack', ghost, offsetX, offsetY, blockType?, stackId? }
+
 // ---- Scratch-style editor init ----
 
 function scInitEditor() {
-  // Build category tabs
   const catsEl = $('scratchCats');
   if (catsEl) {
     catsEl.innerHTML = SCRATCH_CATS.map(cat => `
@@ -3973,267 +3978,494 @@ function scInitEditor() {
       </div>`).join('');
   }
   scShowCat(bcCurrentCat);
+  bcRenderWorkspace();
+  bcRenderSpriteFloor();
+  bcUpdateMiniStage();
+  bcInitAddSpriteGrid();
 }
 
 function scShowCat(catId) {
   bcCurrentCat = catId;
   const cat = SCRATCH_CATS.find(c => c.id === catId);
   if (!cat) return;
-
-  // Update tab active state
   SCRATCH_CATS.forEach(c => {
     const tab = $('scCatTab-'+c.id);
     if (!tab) return;
-    if (c.id === catId) {
-      tab.classList.add('active');
-      tab.style.borderLeftColor = c.color;
-    } else {
-      tab.classList.remove('active');
-      tab.style.borderLeftColor = 'transparent';
-    }
+    tab.classList.toggle('active', c.id === catId);
+    tab.style.borderLeftColor = c.id === catId ? c.color : 'transparent';
   });
-
-  // Build palette
   const pal = $('scratchPal');
   if (!pal) return;
-  pal.innerHTML = `<div class="scratch-pal-title" style="color:${cat.color}">${cat.label}</div>`;
+  pal.innerHTML = `<div class="bce-pal-title" style="color:${cat.color}">${cat.label}</div>`;
   cat.blocks.forEach(b => {
-    const btn = document.createElement('button');
-    btn.className = 'sc-blk' + (b.isHat ? ' sc-blk-hat' : '');
-    btn.style.background = cat.color;
-    // Render label with inline param previews
-    btn.innerHTML = scRenderPalLabel(b, cat.color);
-    btn.onclick = () => bcAddBlock(b.type);
-    pal.appendChild(btn);
+    const div = document.createElement('div');
+    div.className = 'bce-pal-block' + (b.isHat ? ' bce-hat' : '');
+    div.style.background = cat.color;
+    div.style.boxShadow = `0 2px 0 ${cat.dark}`;
+    div.innerHTML = _bcPalHtml(b);
+    div.addEventListener('mousedown', e => { if (e.button !== 0) return; bcPalDragStart(e, b.type, cat.color, cat.dark, div); });
+    pal.appendChild(div);
   });
 }
 
-function scRenderPalLabel(def, color) {
+function _bcPalHtml(def) {
   return def.label.replace(/\[[^\]]+\]/g, m => {
     const pname = m.slice(1,-1);
     const pDef = def.params.find(p => p.name === pname);
     if (!pDef) return m;
-    if (pDef.type === 'color') return `<span style="display:inline-block;width:16px;height:12px;background:${pDef.default};border-radius:2px;vertical-align:middle;border:1px solid rgba(255,255,255,.4)"></span>`;
-    if (pDef.type === 'keysel') return `<span style="background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.4);border-radius:4px;padding:0 4px;font-size:10px">${pDef.default}</span>`;
-    if (pDef.type === 'cond') return `<span style="background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.4);border-radius:4px;padding:0 4px;font-size:10px">${COND_MAP[pDef.default]||pDef.default}</span>`;
-    if (pDef.type === 'stopsel') return `<span style="background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.4);border-radius:4px;padding:0 4px;font-size:10px">모두</span>`;
-    return `<span style="background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.4);border-radius:4px;padding:0 4px;font-size:10px">${pDef.default}</span>`;
+    if (pDef.type==='color') return `<span class="bce-pal-param" style="display:inline-block;width:16px;height:12px;background:${pDef.default};border-radius:2px;vertical-align:middle"></span>`;
+    const label = pDef.type==='keysel' ? pDef.default : pDef.type==='cond' ? (COND_MAP[pDef.default]||pDef.default) : pDef.type==='stopsel' ? '모두' : pDef.default;
+    return `<span class="bce-pal-param">${label}</span>`;
   });
 }
 
-// ---- Block management ----
+// ============================================
+// 드래그앤드롭 블록 워크스페이스
+// ============================================
 
-function bcAddBlock(type, parentId, toElse) {
-  const cat = SCRATCH_CATS.find(c => c.blocks.some(b => b.type===type));
-  const def = cat?.blocks.find(b => b.type===type);
-  if (!def) return;
-  const params = {};
-  def.params.forEach(p => params[p.name] = p.default);
-  const block = {
-    id: bcId(), type, params,
-    children: def.hasChildren ? [] : undefined,
-    elseChildren: def.hasElse ? [] : undefined
-  };
-  if (parentId) {
-    const parent = bcFindBlock(bcScript, parentId);
-    if (parent) {
-      if (toElse && parent.elseChildren) parent.elseChildren.push(block);
-      else if (parent.children) parent.children.push(block);
-    }
-  } else {
-    bcScript.push(block);
-  }
-  bcRenderScript();
-}
-
-function bcFindBlock(blocks, id) {
-  for (const b of blocks) {
-    if (b.id===id) return b;
-    if (b.children) { const f = bcFindBlock(b.children, id); if (f) return f; }
-    if (b.elseChildren) { const f = bcFindBlock(b.elseChildren, id); if (f) return f; }
+function bcFindBlockDef(type) {
+  for (const cat of SCRATCH_CATS) {
+    const def = cat.blocks.find(b => b.type === type);
+    if (def) return { def, cat };
   }
   return null;
 }
 
-function bcDeleteBlock(id) {
-  function remove(arr) {
-    const i = arr.findIndex(b => b.id===id);
-    if (i!==-1) { arr.splice(i,1); return true; }
-    for (const b of arr) {
-      if (b.children && remove(b.children)) return true;
-      if (b.elseChildren && remove(b.elseChildren)) return true;
+function bcMakeBlock(type) {
+  const found = bcFindBlockDef(type);
+  if (!found) return { id: bcId(), type, params: {} };
+  const { def } = found;
+  const params = {};
+  def.params.forEach(p => params[p.name] = p.default);
+  return {
+    id: bcId(), type, params,
+    children: def.hasChildren ? [] : undefined,
+    elseChildren: def.hasElse ? [] : undefined,
+  };
+}
+
+// Compile bcWorkspace → bcScript for the run engine
+function bcCompileScript() {
+  bcScript = [];
+  for (const stack of bcWorkspace) {
+    if (!stack.blocks.length) continue;
+    const first = stack.blocks[0];
+    const found = bcFindBlockDef(first.type);
+    if (found?.def.isHat) {
+      bcScript.push({
+        ...first,
+        children: [...(first.children || []), ...stack.blocks.slice(1)],
+      });
+    } else {
+      stack.blocks.forEach(b => bcScript.push(b));
     }
-    return false;
   }
-  remove(bcScript); bcRenderScript();
 }
 
-function bcMoveBlock(id, dir) {
-  function move(arr) {
-    const i = arr.findIndex(b => b.id===id);
-    if (i!==-1) { const j=i+dir; if(j>=0&&j<arr.length){[arr[i],arr[j]]=[arr[j],arr[i]];return true;} return false; }
-    for (const b of arr) {
-      if (b.children && move(b.children)) return true;
-      if (b.elseChildren && move(b.elseChildren)) return true;
-    }
-    return false;
-  }
-  move(bcScript); bcRenderScript();
-}
-
-function bcClearScript() {
-  if (!confirm('스크립트를 모두 초기화할까요?')) return;
-  bcScript = []; bcRenderScript();
-}
-
-// ---- Script rendering ----
-
-function bcRenderScript() {
-  const area = $('bcScriptArea');
-  if (!area) return;
-  if (bcScript.length===0) {
-    area.innerHTML='<div class="scratch-ws-empty">← 왼쪽 팔레트에서 블록을 클릭하세요</div>';
-    if (!bcRuntime) bcDrawPreview();
-    return;
-  }
-  area.innerHTML = '';
-  const grp = document.createElement('div');
-  grp.className = 'sc-ws-group';
-  bcScript.forEach(b => grp.appendChild(bcRenderBlock(b, true)));
-  area.appendChild(grp);
+function bcClearWorkspace() {
+  if (!confirm('워크스페이스를 모두 초기화할까요?')) return;
+  bcWorkspace = [];
+  bcRenderWorkspace();
   if (!bcRuntime) bcDrawPreview();
 }
 
-function bcRenderBlock(block, isTop) {
-  const cat = SCRATCH_CATS.find(c => c.blocks.some(b => b.type===block.type));
-  const def  = cat?.blocks.find(b => b.type===block.type);
-  if (!def) return document.createTextNode('');
-  const color = cat.color;
-  const dark  = cat.dark || color;
+// Legacy alias used in some places
+function bcClearScript() { bcClearWorkspace(); }
 
+// ---- Workspace rendering ----
+
+function bcRenderWorkspace() {
+  const ws = $('bcCodeWorkspace');
+  if (!ws) return;
+  ws.querySelectorAll('.bw-stack').forEach(el => el.remove());
+  for (const stack of bcWorkspace) {
+    ws.appendChild(_bcCreateStackEl(stack));
+  }
+}
+
+function _bcCreateStackEl(stack) {
+  const div = document.createElement('div');
+  div.className = 'bw-stack';
+  div.dataset.stackId = stack.id;
+  div.style.left = stack.x + 'px';
+  div.style.top = stack.y + 'px';
+
+  stack.blocks.forEach((block, idx) => {
+    const el = _bcCreateBlockEl(block, stack, idx);
+    div.appendChild(el);
+  });
+
+  // Drag entire stack
+  div.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.closest('.bw-del')) return;
+    e.preventDefault();
+    bcStackDragStart(e, stack.id, div);
+  });
+
+  return div;
+}
+
+function _bcCreateBlockEl(block, stack, idx) {
+  const found = bcFindBlockDef(block.type);
+  if (!found) {
+    const unk = document.createElement('div');
+    unk.className = 'bw-block'; unk.style.background = '#888';
+    unk.textContent = block.type; return unk;
+  }
+  const { def, cat } = found;
+  const color = cat.color, dark = cat.dark || color;
+
+  if (def.hasChildren) {
+    return _bcCreateCBlock(block, def, color, dark, stack);
+  }
+
+  const div = document.createElement('div');
+  div.className = 'bw-block' + (def.isHat ? ' bw-hat' : '') + (def.isCap ? ' bw-no-bump' : '');
+  div.style.background = color;
+  div.style.boxShadow = `0 3px 0 ${dark}`;
+  div.dataset.blockId = block.id;
+
+  _bcBuildBlockBody(def, block, div);
+  _bcAddDelBtn(div, () => _bcDeleteFromStack(stack, block.id));
+  return div;
+}
+
+function _bcCreateCBlock(block, def, color, dark, stack) {
   const wrap = document.createElement('div');
-  wrap.className = 'sc-ws-block' + (def.isHat ? ' sc-ws-hat' : '');
-  wrap.style.background = color;
+  wrap.className = 'bw-c-wrap';
+  wrap.dataset.blockId = block.id;
 
-  const row = document.createElement('div');
-  row.className = 'sc-ws-header-row';
+  const top = document.createElement('div');
+  top.className = 'bw-block bw-c-top' + (def.isHat ? ' bw-hat' : '') + ' bw-no-bump';
+  top.style.background = color;
+  top.style.boxShadow = `0 3px 0 ${dark}`;
+  _bcBuildBlockBody(def, block, top);
+  _bcAddDelBtn(top, () => _bcDeleteFromStack(stack, block.id));
+  wrap.appendChild(top);
 
-  // Label with inline param inputs
+  const inner = document.createElement('div');
+  inner.className = 'bw-c-inner';
+  inner.style.borderLeftColor = dark;
+  (block.children || []).forEach(ch => inner.appendChild(_bcCreateBlockEl(ch, stack, -1)));
+  if (!(block.children || []).length) {
+    const hint = document.createElement('div');
+    hint.className = 'bw-c-inner-hint'; hint.textContent = '블록을 안으로 드래그';
+    inner.appendChild(hint);
+  }
+  wrap.appendChild(inner);
+
+  if (def.hasElse) {
+    const elseLabel = document.createElement('div');
+    elseLabel.className = 'bw-c-else-label'; elseLabel.style.background = dark;
+    elseLabel.textContent = '아니면';
+    wrap.appendChild(elseLabel);
+    const elseInner = document.createElement('div');
+    elseInner.className = 'bw-c-inner';
+    elseInner.style.borderLeftColor = dark;
+    (block.elseChildren || []).forEach(ch => elseInner.appendChild(_bcCreateBlockEl(ch, stack, -1)));
+    if (!(block.elseChildren || []).length) {
+      const hint2 = document.createElement('div');
+      hint2.className = 'bw-c-inner-hint'; hint2.textContent = '블록을 안으로 드래그';
+      elseInner.appendChild(hint2);
+    }
+    wrap.appendChild(elseInner);
+  }
+
+  const cap = document.createElement('div');
+  cap.className = 'bw-c-cap'; cap.style.background = color;
+  cap.style.boxShadow = `0 3px 0 ${dark}`;
+  wrap.appendChild(cap);
+  return wrap;
+}
+
+function _bcBuildBlockBody(def, block, container) {
   def.label.split(/(\[[^\]]+\])/).forEach(part => {
     const match = part.match(/^\[(\w+)\]$/);
     if (match) {
       const pname = match[1];
-      const pDef  = def.params.find(p => p.name===pname);
+      const pDef = def.params.find(p => p.name === pname);
       if (!pDef) return;
-      if (pDef.type==='color') {
+      if (pDef.type === 'color') {
         const inp = document.createElement('input');
-        inp.type='color'; inp.value=block.params[pname]||pDef.default;
-        inp.style.cssText='width:28px;height:22px;border:none;background:transparent;cursor:pointer;border-radius:3px;padding:0';
-        inp.addEventListener('change', e => { block.params[pname]=e.target.value; bcDrawPreview(); });
-        row.appendChild(inp);
-      } else if (pDef.type==='keysel') {
-        const opts = ['오른쪽','왼쪽','위','아래','스페이스','A','S','D','W'];
-        const sel = document.createElement('select');
-        sel.className='sc-ws-param';
-        opts.forEach(k => {
-          const o=document.createElement('option'); o.value=k; o.textContent=k;
-          if((block.params[pname]||pDef.default)===k) o.selected=true;
+        inp.type = 'color'; inp.value = block.params[pname] || pDef.default;
+        inp.className = 'bw-inp-color';
+        inp.addEventListener('change', e => { block.params[pname] = e.target.value; bcDrawPreview(); });
+        container.appendChild(inp);
+      } else if (pDef.type === 'keysel') {
+        const sel = document.createElement('select'); sel.className = 'bw-sel';
+        ['오른쪽','왼쪽','위','아래','스페이스','A','S','D','W'].forEach(k => {
+          const o = document.createElement('option'); o.value = k; o.textContent = k;
+          if ((block.params[pname] || pDef.default) === k) o.selected = true;
           sel.appendChild(o);
         });
-        sel.addEventListener('change', e => block.params[pname]=e.target.value);
-        row.appendChild(sel);
-      } else if (pDef.type==='cond') {
-        const sel = document.createElement('select');
-        sel.className='sc-ws-param';
+        sel.addEventListener('change', e => block.params[pname] = e.target.value);
+        container.appendChild(sel);
+      } else if (pDef.type === 'cond') {
+        const sel = document.createElement('select'); sel.className = 'bw-sel';
         Object.keys(COND_MAP).forEach(k => {
-          const o=document.createElement('option'); o.value=k; o.textContent=COND_MAP[k];
-          if((block.params[pname]||pDef.default)===k) o.selected=true;
+          const o = document.createElement('option'); o.value = k; o.textContent = COND_MAP[k];
+          if ((block.params[pname] || pDef.default) === k) o.selected = true;
           sel.appendChild(o);
         });
-        sel.addEventListener('change', e => block.params[pname]=e.target.value);
-        row.appendChild(sel);
-      } else if (pDef.type==='stopsel') {
-        const sel = document.createElement('select');
-        sel.className='sc-ws-param';
+        sel.addEventListener('change', e => block.params[pname] = e.target.value);
+        container.appendChild(sel);
+      } else if (pDef.type === 'stopsel') {
+        const sel = document.createElement('select'); sel.className = 'bw-sel';
         [['all','모두'],['this','이 스크립트'],['other','다른 스크립트']].forEach(([v,t]) => {
-          const o=document.createElement('option'); o.value=v; o.textContent=t;
-          if((block.params[pname]||pDef.default)===v) o.selected=true;
+          const o = document.createElement('option'); o.value = v; o.textContent = t;
+          if ((block.params[pname] || pDef.default) === v) o.selected = true;
           sel.appendChild(o);
         });
-        sel.addEventListener('change', e => block.params[pname]=e.target.value);
-        row.appendChild(sel);
+        sel.addEventListener('change', e => block.params[pname] = e.target.value);
+        container.appendChild(sel);
       } else {
         const inp = document.createElement('input');
-        inp.className='sc-ws-param';
-        inp.value=block.params[pname]!==undefined ? block.params[pname] : (pDef.default||'');
-        inp.style.width= pDef.type==='text' ? '60px' : '44px';
-        inp.addEventListener('input', e => { block.params[pname]=e.target.value; bcDrawPreview(); });
-        row.appendChild(inp);
+        inp.className = 'bw-inp' + (pDef.type === 'text' ? ' bw-inp-text' : '');
+        inp.type = pDef.type === 'num' ? 'number' : 'text';
+        inp.value = block.params[pname] !== undefined ? block.params[pname] : (pDef.default || '');
+        inp.addEventListener('input', e => { block.params[pname] = e.target.value; bcDrawPreview(); });
+        container.appendChild(inp);
       }
-    } else if (part) {
-      const s=document.createElement('span'); s.textContent=part; row.appendChild(s);
+    } else if (part.trim()) {
+      const s = document.createElement('span'); s.textContent = part;
+      container.appendChild(s);
     }
   });
+}
 
-  // Buttons
-  const btns = document.createElement('div');
-  btns.className='sc-ws-btns';
-  if (isTop) {
-    ['▲','▼'].forEach((t,i) => {
-      const b=document.createElement('button'); b.className='sc-ws-btn'; b.textContent=t;
-      b.onclick=()=>bcMoveBlock(block.id, i===0?-1:1); btns.appendChild(b);
-    });
-  }
-  const del=document.createElement('button'); del.className='sc-ws-btn'; del.textContent='✕';
-  del.onclick=()=>bcDeleteBlock(block.id); btns.appendChild(del);
-  row.appendChild(btns);
-  wrap.appendChild(row);
+function _bcAddDelBtn(container, onClick) {
+  const btn = document.createElement('button');
+  btn.className = 'bw-del'; btn.innerHTML = '×'; btn.title = '삭제';
+  btn.addEventListener('click', e => { e.stopPropagation(); onClick(); });
+  container.appendChild(btn);
+}
 
-  // Children
-  if (block.children!==undefined) {
-    const childArea=document.createElement('div');
-    childArea.className='sc-ws-children';
-    block.children.forEach(ch => childArea.appendChild(bcRenderBlock(ch, false)));
-    childArea.appendChild(scMakeAddSel(block.id, false, color));
-    wrap.appendChild(childArea);
-
-    // else branch
-    if (block.elseChildren !== undefined) {
-      const elseLabel = document.createElement('div');
-      elseLabel.className='sc-ws-else-label'; elseLabel.style.background=dark;
-      elseLabel.textContent='아니면';
-      wrap.appendChild(elseLabel);
-      const elseArea = document.createElement('div');
-      elseArea.className='sc-ws-else';
-      block.elseChildren.forEach(ch => elseArea.appendChild(bcRenderBlock(ch, false)));
-      elseArea.appendChild(scMakeAddSel(block.id, true, color));
-      wrap.appendChild(elseArea);
+function _bcDeleteFromStack(stack, blockId) {
+  function removeFrom(arr) {
+    const i = arr.findIndex(b => b.id === blockId);
+    if (i !== -1) { arr.splice(i, 1); return true; }
+    for (const b of arr) {
+      if (b.children && removeFrom(b.children)) return true;
+      if (b.elseChildren && removeFrom(b.elseChildren)) return true;
     }
-
-    const endDiv=document.createElement('div');
-    endDiv.className='sc-ws-end'; endDiv.style.background=dark;
-    endDiv.textContent='끝';
-    wrap.appendChild(endDiv);
+    return false;
   }
-  return wrap;
+  removeFrom(stack.blocks);
+  if (stack.blocks.length === 0) bcWorkspace = bcWorkspace.filter(s => s.id !== stack.id);
+  bcRenderWorkspace();
+  if (!bcRuntime) bcDrawPreview();
 }
 
-function scMakeAddSel(parentId, toElse, color) {
-  const addSel=document.createElement('select');
-  addSel.className='sc-ws-add-sel';
-  const ph=document.createElement('option'); ph.value=''; ph.textContent='+ 블록 추가...'; addSel.appendChild(ph);
-  SCRATCH_CATS.forEach(cat => {
-    const grp=document.createElement('optgroup'); grp.label=cat.label;
-    cat.blocks.filter(b=>!b.isHat).forEach(b=>{
-      const o=document.createElement('option'); o.value=b.type;
-      o.textContent=b.label.replace(/\[[^\]]+\]/g,'(값)'); grp.appendChild(o);
-    }); addSel.appendChild(grp);
-  });
-  addSel.addEventListener('change', e => {
-    if(e.target.value){ bcAddBlock(e.target.value, parentId, toElse); e.target.value=''; }
-  });
-  return addSel;
+// ---- Drag-drop ----
+
+function bcPalDragStart(e, blockType, color, dark, palEl) {
+  e.preventDefault();
+  // Ghost = mini block visual
+  const ghost = document.createElement('div');
+  ghost.className = 'bw-ghost bw-block';
+  ghost.style.cssText = `background:${color};box-shadow:0 3px 0 ${dark};min-width:120px;`;
+  const found = bcFindBlockDef(blockType);
+  if (found) {
+    ghost.innerHTML = found.def.label
+      .replace(/\[[^\]]+\]/g, m => {
+        const pname = m.slice(1,-1);
+        const pDef = found.def.params.find(p => p.name === pname);
+        if (!pDef) return m;
+        return `<span class="bw-inp" style="display:inline-block;min-width:28px;">${pDef.default}</span>`;
+      });
+  }
+  document.body.appendChild(ghost);
+  const gw = ghost.offsetWidth || 120, gh = ghost.offsetHeight || 36;
+  ghost.style.left = (e.clientX - gw/2) + 'px';
+  ghost.style.top = (e.clientY - gh/2) + 'px';
+
+  _bcDrag = { type: 'palette', ghost, blockType, offsetX: gw/2, offsetY: gh/2 };
 }
+
+function bcStackDragStart(e, stackId, stackEl) {
+  e.preventDefault();
+  const rect = stackEl.getBoundingClientRect();
+  const ghost = stackEl.cloneNode(true);
+  ghost.className = 'bw-ghost bw-stack';
+  ghost.style.left = rect.left + 'px';
+  ghost.style.top = rect.top + 'px';
+  ghost.style.width = rect.width + 'px';
+  ghost.style.pointerEvents = 'none';
+  document.body.appendChild(ghost);
+  stackEl.classList.add('bw-dragging');
+
+  _bcDrag = {
+    type: 'stack', ghost, stackId, stackEl,
+    offsetX: e.clientX - rect.left,
+    offsetY: e.clientY - rect.top,
+  };
+}
+
+// Global mouse handlers for drag-drop
+document.addEventListener('mousemove', e => {
+  if (!_bcDrag) return;
+  const { ghost, offsetX, offsetY } = _bcDrag;
+  ghost.style.left = (e.clientX - offsetX) + 'px';
+  ghost.style.top = (e.clientY - offsetY) + 'px';
+
+  // Highlight drop target
+  document.querySelectorAll('.bw-stack.drop-target').forEach(el => el.classList.remove('drop-target'));
+  const snap = _bcFindSnapTarget(e.clientX, e.clientY, _bcDrag.stackId);
+  if (snap) {
+    const el = document.querySelector(`[data-stack-id="${snap.id}"]`);
+    if (el) el.classList.add('drop-target');
+  }
+});
+
+document.addEventListener('mouseup', e => {
+  if (!_bcDrag) return;
+  const drag = _bcDrag;
+  _bcDrag = null;
+  drag.ghost.remove();
+  document.querySelectorAll('.bw-stack.drop-target,.bw-stack.bw-dragging').forEach(el => {
+    el.classList.remove('drop-target', 'bw-dragging');
+  });
+
+  const ws = $('bcCodeWorkspace');
+  if (!ws) return;
+  const wsRect = ws.getBoundingClientRect();
+  const inWS = e.clientX >= wsRect.left && e.clientX <= wsRect.right &&
+                e.clientY >= wsRect.top && e.clientY <= wsRect.bottom;
+
+  if (inWS) {
+    const dropX = e.clientX - wsRect.left + ws.scrollLeft - drag.offsetX;
+    const dropY = e.clientY - wsRect.top + ws.scrollTop - drag.offsetY;
+
+    if (drag.type === 'palette') {
+      const newBlock = bcMakeBlock(drag.blockType);
+      const snap = _bcFindSnapTarget(e.clientX, e.clientY, null);
+      if (snap) {
+        snap.blocks.push(newBlock);
+      } else {
+        bcWorkspace.push({ id: 'st' + bcId(), x: Math.max(0, dropX), y: Math.max(0, dropY), blocks: [newBlock] });
+      }
+    } else if (drag.type === 'stack') {
+      const stack = bcWorkspace.find(s => s.id === drag.stackId);
+      if (stack) {
+        const snap = _bcFindSnapTarget(e.clientX, e.clientY, drag.stackId);
+        if (snap) {
+          snap.blocks.push(...stack.blocks);
+          bcWorkspace = bcWorkspace.filter(s => s.id !== drag.stackId);
+        } else {
+          stack.x = Math.max(0, dropX);
+          stack.y = Math.max(0, dropY);
+        }
+      }
+    }
+  } else if (drag.type === 'stack') {
+    // Dropped outside → delete stack
+    bcWorkspace = bcWorkspace.filter(s => s.id !== drag.stackId);
+  }
+
+  bcRenderWorkspace();
+  if (!bcRuntime) bcDrawPreview();
+});
+
+function _bcFindSnapTarget(clientX, clientY, excludeId) {
+  const ws = $('bcCodeWorkspace');
+  if (!ws) return null;
+  for (const stack of bcWorkspace) {
+    if (stack.id === excludeId) continue;
+    const el = ws.querySelector(`[data-stack-id="${stack.id}"]`);
+    if (!el) continue;
+    const rect = el.getBoundingClientRect();
+    if (clientX >= rect.left - 16 && clientX <= rect.right + 16 &&
+        clientY >= rect.bottom - 16 && clientY <= rect.bottom + 32) {
+      return stack;
+    }
+  }
+  return null;
+}
+
+// ---- Sprite floor ----
+
+const BC_SPRITE_LIB = [
+  { key:'dog', emoji:'🐶', label:'강아지' }, { key:'duck', emoji:'🦆', label:'오리' },
+  { key:'bear', emoji:'🐻', label:'곰' }, { key:'bunny', emoji:'🐰', label:'토끼' },
+  { key:'tiger', emoji:'🐯', label:'호랑이' }, { key:'fox', emoji:'🦊', label:'여우' },
+  { key:'lion', emoji:'🦁', label:'사자' }, { key:'person', emoji:'🧍', label:'사람' },
+  { key:'robot', emoji:'🤖', label:'로봇' }, { key:'ninja', emoji:'🥷', label:'닌자' },
+  { key:'wizard', emoji:'🧙', label:'마법사' }, { key:'alien', emoji:'👾', label:'외계인' },
+  { key:'ghost', emoji:'👻', label:'유령' }, { key:'rocket', emoji:'🚀', label:'로켓' },
+  { key:'ufo', emoji:'🛸', label:'UFO' }, { key:'star', emoji:'⭐', label:'별' },
+  { key:'bolt', emoji:'⚡', label:'번개' }, { key:'ball', emoji:'🔴', label:'공' },
+  { key:'bomb', emoji:'💣', label:'폭탄' }, { key:'sword', emoji:'⚔️', label:'검' },
+  { key:'car', emoji:'🚗', label:'자동차' }, { key:'arrow', emoji:'➤', label:'화살표' },
+];
+
+function bcRenderSpriteFloor() {
+  const list = $('bcSpriteFloorList');
+  if (!list) return;
+  // Cat card (always first)
+  list.innerHTML = '';
+  const card = document.createElement('div');
+  card.className = 'bce-floor-sprite-card active';
+  card.title = '고양이 설정';
+  const cv = document.createElement('canvas');
+  cv.width = 54; cv.height = 54;
+  const ctx = cv.getContext('2d');
+  ctx.translate(27, 38); bcDrawCat(ctx, 50);
+  card.appendChild(cv);
+  const nm = document.createElement('div');
+  nm.className = 'bce-floor-sprite-name';
+  nm.textContent = $('bcSpriteLabel')?.value || '고양이';
+  card.appendChild(nm);
+  const editBtn = document.createElement('button');
+  editBtn.className = 'bce-sprite-edit-btn'; editBtn.innerHTML = '⚙';
+  editBtn.title = '설정'; editBtn.onclick = (e) => { e.stopPropagation(); bcOpenSpriteSettings(); };
+  card.appendChild(editBtn);
+  list.appendChild(card);
+}
+
+function bcInitAddSpriteGrid() {
+  const grid = $('bcAddSpriteGrid');
+  if (!grid) return;
+  grid.innerHTML = '<div class="bce-add-grid">' +
+    BC_SPRITE_LIB.map(s => `
+      <div class="bce-add-item" onclick="bcSelectSprite('${s.key}','${s.emoji}','${s.label}')">
+        <span class="bce-add-item-emoji">${s.emoji}</span>
+        <span class="bce-add-item-name">${s.label}</span>
+      </div>`).join('') +
+    `<label class="bce-add-item" title="파일에서 불러오기" style="cursor:pointer">
+       <span class="bce-add-item-emoji">📁</span>
+       <span class="bce-add-item-name">업로드</span>
+       <input type="file" accept="image/*" onchange="bcUploadSprite(event);bcCloseAddSprite();" style="display:none">
+     </label></div>`;
+}
+
+function bcOpenAddSprite() { $('bcAddSpritePopup')?.classList.remove('hidden'); }
+function bcCloseAddSprite() { $('bcAddSpritePopup')?.classList.add('hidden'); }
+
+function bcSelectSprite(key, emoji, label) {
+  bcSprite.shape = 'emoji'; bcSprite.emoji = emoji;
+  $('bcSpriteLabel').value = label;
+  bcUpdateSprite();
+  bcRenderSpriteFloor();
+  bcCloseAddSprite();
+}
+
+function bcOpenSpriteSettings() { $('bcSpriteSettingsPopup')?.classList.remove('hidden'); }
+
+function bcOpenBgPopup() {
+  bcInitSceneGrid();
+  $('bcBgPopup')?.classList.remove('hidden');
+}
+function bcCloseBgPopup() { $('bcBgPopup')?.classList.add('hidden'); }
+
+function bcUpdateMiniStage() {
+  const cv = $('bcStageMiniCanvas');
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  bcDrawBg(ctx, 66, 50);
+}
+
+// (bcSetBgColor / bcSetBgScene defined below)
 
 // ---- Open / Close ----
 
@@ -4261,35 +4493,26 @@ function bcSwitchMode(mode) {
   bcBegStop();
   if (mode !== 'expert') bcStop();
 
-  const begEl = $('bc-beginner');
-  const expEl = $('bc-expert');
-  const tabBeg = $('bcModeTabBeg');
-  const tabExp = $('bcModeTabExp');
-  const runBtn = $('bcRunBtn');
-  const stopBtn = $('bcStopBtn');
-  const submitBtn = $('bcSubmitBtn');
-  const clearBtn = $('bcClearBtn');
+  const begEl = $('bc-beginner'), expEl = $('bc-expert');
+  const tabBeg = $('bcModeTabBeg'), tabExp = $('bcModeTabExp');
+  const runBtn = $('bcRunBtn'), stopBtn = $('bcStopBtn');
+  const submitBtn = $('bcSubmitBtn'), clearBtn = $('bcClearBtn');
 
   if (mode === 'beginner') {
-    begEl.classList.remove('hidden');
-    expEl.classList.add('hidden');
-    tabBeg.classList.add('active');
-    tabExp.classList.remove('active');
+    begEl.classList.remove('hidden'); expEl.classList.add('hidden');
+    tabBeg.classList.add('active'); tabExp.classList.remove('active');
     if (runBtn) runBtn.style.display = 'none';
     if (stopBtn) stopBtn.style.display = 'none';
     if (submitBtn) submitBtn.style.display = 'none';
     if (clearBtn) clearBtn.style.display = 'none';
     bcRenderBegZone();
   } else {
-    begEl.classList.add('hidden');
-    expEl.classList.remove('hidden');
-    tabBeg.classList.remove('active');
-    tabExp.classList.add('active');
+    begEl.classList.add('hidden'); expEl.classList.remove('hidden');
+    tabBeg.classList.remove('active'); tabExp.classList.add('active');
     if (runBtn) runBtn.style.display = '';
     if (submitBtn) submitBtn.style.display = '';
     if (clearBtn) clearBtn.style.display = '';
     scInitEditor();
-    bcRenderScript();
     bcDrawPreview();
   }
 }
@@ -4726,9 +4949,8 @@ function bcSetBgColor(color) {
   const badge = $('bcCustomBgBadge'), clearBtn = $('bcClearBgImg');
   if (badge) badge.style.display = 'none';
   if (clearBtn) clearBtn.style.display = 'none';
-  // 씬 grid 선택 해제
   document.querySelectorAll('.bc-scene-item').forEach(el=>el.classList.remove('active'));
-  bcDrawPreview();
+  bcDrawPreview(); bcUpdateMiniStage();
 }
 
 function bcSetBgScene(sceneId) {
@@ -4737,7 +4959,8 @@ function bcSetBgScene(sceneId) {
   if (badge) badge.style.display = 'none';
   if (clearBtn) clearBtn.style.display = 'none';
   document.querySelectorAll('.bc-scene-item').forEach(el=>el.classList.toggle('active', el.dataset.scene===sceneId));
-  bcDrawPreview();
+  bcDrawPreview(); bcUpdateMiniStage();
+  bcCloseBgPopup();
 }
 
 function bcUploadBg(event) {
@@ -4751,7 +4974,7 @@ function bcUploadBg(event) {
       const badge = $('bcCustomBgBadge'), clearBtn = $('bcClearBgImg');
       if (badge) badge.style.display = '';
       if (clearBtn) clearBtn.style.display = '';
-      bcDrawPreview();
+      bcDrawPreview(); bcUpdateMiniStage(); bcCloseBgPopup();
     };
   };
   reader.readAsDataURL(file);
@@ -4763,7 +4986,7 @@ function bcClearCustomBg() {
   const badge = $('bcCustomBgBadge'), clearBtn = $('bcClearBgImg');
   if (badge) badge.style.display = 'none';
   if (clearBtn) clearBtn.style.display = 'none';
-  bcDrawPreview();
+  bcDrawPreview(); bcUpdateMiniStage();
 }
 
 function bcUploadSprite(event) {
@@ -4774,14 +4997,10 @@ function bcUploadSprite(event) {
     img.onload = () => {
       bcCustomSpriteImg = img;
       bcSprite.shape = 'custom'; bcSprite.emoji = null;
-      // 선택 해제
-      document.querySelectorAll('.scratch-char').forEach(el=>el.classList.remove('active'));
       const badge = $('bcCustomSpriteBadge'), clearBtn = $('bcClearSpriteImg');
       if (badge) badge.style.display = '';
       if (clearBtn) clearBtn.style.display = '';
-      const preview = $('scratchSpritePreviewEmoji');
-      if (preview) { preview.textContent=''; preview.style.backgroundImage=`url(${e.target.result})`; preview.style.backgroundSize='cover'; preview.style.backgroundPosition='center'; }
-      bcDrawPreview();
+      bcDrawPreview(); bcRenderSpriteFloor();
     };
   };
   reader.readAsDataURL(file);
@@ -4790,19 +5009,16 @@ function bcUploadSprite(event) {
 
 function bcClearCustomSprite() {
   bcCustomSpriteImg = null;
-  bcSetChar('cat');
+  bcSprite.shape = 'cat'; bcSprite.emoji = '🐱';
   const badge = $('bcCustomSpriteBadge'), clearBtn = $('bcClearSpriteImg');
   if (badge) badge.style.display = 'none';
   if (clearBtn) clearBtn.style.display = 'none';
+  bcDrawPreview(); bcRenderSpriteFloor();
 }
 
 function bcPanelTab(tab) {
-  const isSp = tab === 'sprite';
-  $('bcPanelSprite').style.display = isSp ? '' : 'none';
-  $('bcPanelBg').style.display = isSp ? 'none' : '';
-  $('bcPanelTabSprite').classList.toggle('active', isSp);
-  $('bcPanelTabBg').classList.toggle('active', !isSp);
-  if (!isSp) bcInitSceneGrid();
+  // Legacy no-op – panels now use popup system
+  if (tab === 'bg') bcOpenBgPopup();
 }
 
 // 배경 씬 그리드 초기화 (배경 탭 처음 열 때)
@@ -4818,9 +5034,8 @@ const BC_SCENES_DEF = [
 ];
 let _bcScenesInited = false;
 function bcInitSceneGrid() {
-  if (_bcScenesInited) return; _bcScenesInited = true;
   const grid = $('bcSceneGrid'); if (!grid) return;
-  grid.innerHTML = '';
+  if (grid.children.length > 0) return; // already inited
   BC_SCENES_DEF.forEach(({ id, label }) => {
     const item = document.createElement('div');
     item.className = 'bc-scene-item'; item.dataset.scene = id;
@@ -5011,24 +5226,19 @@ function bcSetChar(charKey) {
   if (!ch) return;
   bcSprite.shape = ch.shape;
   bcSprite.emoji = ch.emoji || null;
-  // Update preview emoji in panel
-  const prev = $('scratchSpritePreviewEmoji');
-  if (prev) prev.textContent = ch.emoji || '?';
-  // Update active state
-  document.querySelectorAll('.scratch-char').forEach(b => {
-    b.classList.toggle('active', b.dataset.char === charKey);
-  });
   bcDrawPreview();
+  bcRenderSpriteFloor();
 }
 
 function bcUpdateSprite() {
-  bcSprite.color   = $('bcSpriteColor')?.value || '#3b82f6';
+  bcSprite.color   = $('bcSpriteColor')?.value || '#f5a623';
   const sizeEl = $('bcSpriteSize');
-  if (sizeEl) { bcSprite.w = bcSprite.h = Math.max(5, parseInt(sizeEl.value)||40); bcSprite.baseSize = bcSprite.w; }
+  if (sizeEl) { bcSprite.w = bcSprite.h = Math.max(5, parseInt(sizeEl.value)||50); bcSprite.baseSize = bcSprite.w; }
   bcSprite.label   = $('bcSpriteLabel')?.value || '';
   bcSprite.dir     = parseFloat($('bcSpriteDir')?.value || 90);
   bcSprite.visible = $('bcSpriteVisible')?.checked !== false;
   bcDrawPreview();
+  bcRenderSpriteFloor();
 }
 
 window.bcMoveSprite = function() {
@@ -5041,6 +5251,66 @@ window.selectSprite = function() {};
 
 // ---- Drawing ----
 
+function bcDrawCat(ctx, size) {
+  const s = size / 50;
+  ctx.save();
+  // Tail
+  ctx.strokeStyle = '#e08c20'; ctx.lineWidth = 5*s; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(12*s, 12*s);
+  ctx.bezierCurveTo(34*s, 22*s, 40*s, -4*s, 26*s, -20*s); ctx.stroke();
+  // Legs
+  ctx.fillStyle = '#f5a623';
+  ctx.beginPath(); ctx.ellipse(-9*s, 30*s, 7*s, 11*s, 0.3, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(9*s, 30*s, 7*s, 11*s, -0.3, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ffd896';
+  ctx.beginPath(); ctx.ellipse(-10*s, 40*s, 7*s, 4*s, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(10*s, 40*s, 7*s, 4*s, 0, 0, Math.PI*2); ctx.fill();
+  // Body
+  ctx.fillStyle = '#f5a623';
+  ctx.beginPath(); ctx.ellipse(0, 13*s, 16*s, 20*s, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#fde9c3';
+  ctx.beginPath(); ctx.ellipse(0, 15*s, 9*s, 13*s, 0, 0, Math.PI*2); ctx.fill();
+  // Arms
+  ctx.fillStyle = '#f5a623';
+  ctx.beginPath(); ctx.ellipse(-19*s, 8*s, 7*s, 5*s, 0.9, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(19*s, 8*s, 7*s, 5*s, -0.9, 0, Math.PI*2); ctx.fill();
+  // Head
+  ctx.fillStyle = '#f5a623';
+  ctx.beginPath(); ctx.ellipse(0, -13*s, 19*s, 17*s, 0, 0, Math.PI*2); ctx.fill();
+  // Ears (outer)
+  ctx.fillStyle = '#f5a623';
+  ctx.beginPath(); ctx.moveTo(-16*s,-22*s); ctx.lineTo(-26*s,-40*s); ctx.lineTo(-5*s,-28*s); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(16*s,-22*s); ctx.lineTo(26*s,-40*s); ctx.lineTo(5*s,-28*s); ctx.closePath(); ctx.fill();
+  // Ears (inner)
+  ctx.fillStyle = '#ffb3bb';
+  ctx.beginPath(); ctx.moveTo(-14*s,-24*s); ctx.lineTo(-21*s,-36*s); ctx.lineTo(-7*s,-28*s); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(14*s,-24*s); ctx.lineTo(21*s,-36*s); ctx.lineTo(7*s,-28*s); ctx.closePath(); ctx.fill();
+  // Eyes (white)
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.ellipse(-7*s,-16*s, 5.5*s,6.5*s, 0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(7*s,-16*s, 5.5*s,6.5*s, 0,0,Math.PI*2); ctx.fill();
+  // Pupils
+  ctx.fillStyle = '#222';
+  ctx.beginPath(); ctx.arc(-7*s,-15*s, 3*s, 0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(7*s,-15*s, 3*s, 0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-5.5*s,-17*s, 1.2*s, 0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(8.5*s,-17*s, 1.2*s, 0,Math.PI*2); ctx.fill();
+  // Nose
+  ctx.fillStyle = '#ff99aa';
+  ctx.beginPath(); ctx.moveTo(0,-9*s); ctx.lineTo(-2.5*s,-13*s); ctx.lineTo(2.5*s,-13*s); ctx.closePath(); ctx.fill();
+  // Mouth
+  ctx.strokeStyle = '#c07830'; ctx.lineWidth = 1.4*s; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(0,-9*s); ctx.quadraticCurveTo(-4*s,-5*s,-8*s,-7*s); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,-9*s); ctx.quadraticCurveTo(4*s,-5*s,8*s,-7*s); ctx.stroke();
+  // Whiskers
+  ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 0.9*s;
+  [[-18,-11,-3,-10],[-18,-8,-3,-8],[-18,-5,-3,-6],[18,-11,3,-10],[18,-8,3,-8],[18,-5,3,-6]].forEach(([x1,y1,x2,y2]) => {
+    ctx.beginPath(); ctx.moveTo(x1*s,y1*s); ctx.lineTo(x2*s,y2*s); ctx.stroke();
+  });
+  ctx.restore();
+}
+
 function bcDrawSprite(ctx, sp) {
   if (!sp.visible) return;
   const {x,y,w,h,shape,color,label,emoji,dir} = sp;
@@ -5050,6 +5320,8 @@ function bcDrawSprite(ctx, sp) {
   ctx.rotate(angle);
   if (shape==='custom' && bcCustomSpriteImg) {
     ctx.drawImage(bcCustomSpriteImg, -w/2, -h/2, w, h);
+  } else if (shape==='cat' || emoji==='🐱') {
+    bcDrawCat(ctx, w);
   } else if (shape==='emoji' && emoji) {
     ctx.font = `${w}px serif`;
     ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -5118,6 +5390,7 @@ function bcDrawPreview() {
 
 function bcRun() {
   if (bcRuntime) bcStop();
+  bcCompileScript(); // compile workspace → bcScript
   bcVars={}; bcShownVars=new Set(); _bcBroadcastBus={};
   const sp=bcSprite;
   sp.x=240; sp.y=180; sp.velX=0; sp.velY=0; sp.visible=true; sp.say=null;
@@ -5289,6 +5562,7 @@ function bcStop(){
 async function bcSubmit(){
   const title=$('bcGameTitle')?.value?.trim();
   if(!title){showToast('게임 제목을 입력해주세요!','error');return;}
+  bcCompileScript();
   if(bcScript.length===0){showToast('블록을 추가해주세요!','error');return;}
   bcStop();
   const program={script:bcScript,sprite:bcSprite,bgColor:bcBgColor,bgScene:bcBgScene};
@@ -5473,6 +5747,12 @@ window.openBlockCoder   = openBlockCoder;
 window.closeBlockCoder  = closeBlockCoder;
 window.bcSwitchMode     = bcSwitchMode;
 window.bcToggleStage    = bcToggleStage;
+window.bcRun            = bcRun;
+window.bcStop           = bcStop;
+window.bcSubmit         = bcSubmit;
+window.bcUpdateSprite   = bcUpdateSprite;
+window.bcSetChar        = bcSetChar;
+window.scShowCat        = scShowCat;
 window.bcBegSelectTpl   = bcBegSelectTpl;
 window.bcBegSetChar     = bcBegSetChar;
 window.bcBegSetSpeed    = bcBegSetSpeed;
@@ -5487,6 +5767,13 @@ window.bcClearCustomBg  = bcClearCustomBg;
 window.bcUploadSprite   = bcUploadSprite;
 window.bcClearCustomSprite = bcClearCustomSprite;
 window.bcPanelTab       = bcPanelTab;
+window.bcOpenAddSprite  = bcOpenAddSprite;
+window.bcCloseAddSprite = bcCloseAddSprite;
+window.bcSelectSprite   = bcSelectSprite;
+window.bcOpenBgPopup    = bcOpenBgPopup;
+window.bcCloseBgPopup   = bcCloseBgPopup;
+window.bcOpenSpriteSettings = bcOpenSpriteSettings;
+window.bcClearWorkspace = bcClearWorkspace;
 window.loadUserGames    = loadUserGames;
 window.openUserGame     = openUserGame;
 window.closeUserGame    = closeUserGame;
