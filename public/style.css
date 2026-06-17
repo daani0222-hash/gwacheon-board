@@ -2999,6 +2999,67 @@ input::placeholder, textarea::placeholder { color: var(--text-4); }
   font-size: 11px; color: #575E75;
 }
 
+/* ── 채팅 알림 바 ── */
+.chat-notif-bar {
+  position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+  z-index: 9900; display: flex; flex-direction: column; gap: 6px;
+  align-items: center; pointer-events: none; min-width: 0; max-width: 360px; width: 90%;
+}
+.chat-notif-item {
+  background: rgba(20,20,40,0.92); color: #fff;
+  padding: 8px 16px; border-radius: 24px; font-size: 13px;
+  display: flex; align-items: center; gap: 8px; max-width: 100%;
+  backdrop-filter: blur(8px); box-shadow: 0 3px 16px rgba(0,0,0,0.4);
+  animation: chatNotifIn .25s ease; cursor: pointer; pointer-events: auto;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  border: 1px solid rgba(255,255,255,.12);
+}
+.chat-notif-item strong { flex-shrink: 0; }
+.chat-notif-item:hover { background: rgba(40,40,80,0.95); }
+@keyframes chatNotifIn { from { opacity:0; transform:translateY(-12px); } to { opacity:1; transform:none; } }
+
+/* ── 스프라이트/배경 탭 ── */
+.scratch-panel-tabs {
+  display: flex; gap: 0; margin-bottom: 8px;
+  border-bottom: 2px solid #E5E5E5;
+}
+.scratch-panel-tab {
+  flex: 1; padding: 5px 8px; font-size: 11px; font-weight: 700;
+  border: none; background: none; cursor: pointer; color: #888;
+  border-bottom: 2px solid transparent; margin-bottom: -2px; transition: color .1s;
+}
+.scratch-panel-tab.active { color: #4C97FF; border-bottom-color: #4C97FF; }
+.scratch-panel-tab:hover { color: #4C97FF; }
+
+/* 스프라이트 업로드 버튼 */
+.scratch-sprite-upload-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 80px; flex-shrink: 0; border: 2px dashed #4C97FF;
+  border-radius: 4px; cursor: pointer; font-size: 10px; font-weight: 700;
+  color: #4C97FF; text-align: center; height: 80px; background: #f0f6ff;
+  flex-direction: column; gap: 2px; transition: background .1s;
+}
+.scratch-sprite-upload-btn:hover { background: #e0edff; }
+
+/* 씬 그리드 */
+.bc-scene-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+  margin-bottom: 4px;
+}
+.bc-scene-item {
+  border-radius: 4px; cursor: pointer; border: 2px solid #D9D9D9;
+  overflow: hidden; aspect-ratio: 4/3; transition: border-color .1s;
+  position: relative;
+}
+.bc-scene-item:hover { border-color: #4C97FF; }
+.bc-scene-item.active { border-color: #4C97FF; outline: 2px solid #4C97FF; outline-offset: 0; }
+.bc-scene-item canvas { display: block; width: 100%; height: 100%; }
+.bc-scene-item .bc-scene-label {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: rgba(0,0,0,.5); color: #fff; font-size: 8px; font-weight: 700;
+  text-align: center; padding: 1px;
+}
+
 /* 스테이지 상단바 (고수코딩존) */
 .scratch-stage-topbar {
   display: flex; align-items: center; justify-content: space-between;

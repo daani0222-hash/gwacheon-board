@@ -588,10 +588,14 @@ function connectSocket() {
   });
 
   socket.on('globalMessage', (msg) => {
-    if (state.currentChannel !== 'global' || state.activeDMSocket || state.activeGroupId) {
+    const viewingGlobal = state.currentChannel === 'global' && !state.activeDMSocket && !state.activeGroupId;
+    if (!viewingGlobal) {
       incrementChatBadge();
     }
-    if (state.currentChannel === 'global' && !state.activeDMSocket && !state.activeGroupId) {
+    if (state.currentView !== 'chat' || !viewingGlobal) {
+      showChatNotif(msg.nickname, msg.content, 'global');
+    }
+    if (viewingGlobal) {
       appendMessage(msg, 'global');
       scrollToBottom();
     }
@@ -600,7 +604,7 @@ function connectSocket() {
   socket.on('directMessage', (msg) => {
     const isActiveDM = state.activeDMSocket === msg.fromSocketId ||
                        state.activeDMSocket === msg.toSocketId;
-    if (isActiveDM) {
+    if (isActiveDM && state.currentView === 'chat') {
       appendMessage(msg, 'dm');
       scrollToBottom();
     } else {
@@ -608,7 +612,7 @@ function connectSocket() {
       state.unreadDM[otherId] = (state.unreadDM[otherId] || 0) + 1;
       updateDMList();
       incrementChatBadge();
-      showToast(`💬 ${msg.fromNickname}: ${msg.content.slice(0, 30)}`, 'info');
+      showChatNotif(msg.fromNickname || msg.nickname, msg.content, 'dm');
     }
   });
 
@@ -638,13 +642,15 @@ function connectSocket() {
   });
 
   socket.on('groupMessage', (msg) => {
-    if (state.activeGroupId === msg.roomId) {
+    const viewingGroup = state.activeGroupId === msg.roomId && state.currentView === 'chat';
+    if (viewingGroup) {
       appendMessage(msg, 'group');
       scrollToBottom();
     } else {
       state.unreadGroup[msg.roomId] = (state.unreadGroup[msg.roomId] || 0) + 1;
       renderGroupRooms();
       incrementChatBadge();
+      showChatNotif(msg.nickname, msg.content, 'group');
     }
   });
 
@@ -2994,6 +3000,63 @@ const CHESS_PIECES = {
   bK:'♚', bQ:'♛', bR:'♜', bB:'♝', bN:'♞', bP:'♟'
 };
 
+// =============================================
+// 채팅 알림 바
+// =============================================
+function showChatNotif(nickname, content, type) {
+  if (state.currentView === 'chat') return; // 채팅 화면이면 표시 안 함
+  const bar = document.getElementById('chatNotifBar');
+  if (!bar) return;
+  // 같은 사람 연속 알림 방지 (0.5초 내)
+  if (bar._lastNick === nickname && bar._lastTime && Date.now() - bar._lastTime < 500) return;
+  bar._lastNick = nickname; bar._lastTime = Date.now();
+
+  const item = document.createElement('div');
+  item.className = 'chat-notif-item';
+  const icon = type === 'dm' ? '💬' : type === 'group' ? '👥' : '🌏';
+  const preview = content ? content.slice(0, 36) + (content.length > 36 ? '…' : '') : '(미디어)';
+  item.innerHTML = `<span style="font-size:15px">${icon}</span><strong>${nickname}</strong><span style="opacity:.8;overflow:hidden;text-overflow:ellipsis">: ${preview}</span>`;
+  item.onclick = () => { switchView('chat'); item.remove(); };
+  bar.appendChild(item);
+
+  setTimeout(() => {
+    item.style.cssText += 'opacity:0;transition:opacity .3s';
+    setTimeout(() => item.remove(), 320);
+  }, 4000);
+}
+
+// =============================================
+// 체스 – 앙파상 / 캐슬링 헬퍼
+// =============================================
+function isSquareAttacked(board, r, c, byColor) {
+  const inB = (r,c) => r>=0&&r<8&&c>=0&&c<8;
+  const dir = byColor === 'w' ? -1 : 1;
+  for (let br=0;br<8;br++) for (let bc=0;bc<8;bc++) {
+    const p = board[br][bc]; if (!p || p[0] !== byColor) continue;
+    const t = p[1];
+    if (t==='P') { if (br+dir===r && (bc-1===c||bc+1===c)) return true; }
+    else if (t==='N') { const dr=Math.abs(br-r),dc=Math.abs(bc-c); if((dr===2&&dc===1)||(dr===1&&dc===2))return true; }
+    else if (t==='K') { if(Math.abs(br-r)<=1&&Math.abs(bc-c)<=1)return true; }
+    else if (t==='R'||t==='Q') {
+      if (br===r||bc===c) {
+        const sdr=br===r?0:(r-br)/Math.abs(r-br), sdc=bc===c?0:(c-bc)/Math.abs(c-bc);
+        let nr=br+sdr,nc=bc+sdc; let ok=true;
+        while(nr!==r||nc!==c){if(board[nr][nc]){ok=false;break;}nr+=sdr;nc+=sdc;}
+        if(ok)return true;
+      }
+    }
+    if (t==='B'||t==='Q') {
+      if (Math.abs(br-r)===Math.abs(bc-c)&&br!==r) {
+        const sdr=(r-br)/Math.abs(r-br), sdc=(c-bc)/Math.abs(c-bc);
+        let nr=br+sdr,nc=bc+sdc; let ok=true;
+        while(nr!==r||nc!==c){if(board[nr][nc]){ok=false;break;}nr+=sdr;nc+=sdc;}
+        if(ok)return true;
+      }
+    }
+  }
+  return false;
+}
+
 function initChess(mode) {
   // 초기 배치
   const INIT = [
@@ -3012,6 +3075,8 @@ function initChess(mode) {
   gameState.myTurn = true;
   gameState.selected = null;
   gameState.possibleMoves = [];
+  gameState.enPassant = null; // { r, c } 앙파상 대상 칸
+  gameState.castling = { wK:true, wKR:true, wQR:true, bK:true, bKR:true, bQR:true };
 
   const inner = $('gameBoardInner');
   inner.style.cssText = 'display:flex;justify-content:center;padding:8px 0';
@@ -3072,13 +3137,48 @@ function handleChessClick(r, c) {
 }
 
 function applyChessMove(fr, fc, tr, tc, isMe) {
+  const piece = gameState.board[fr][fc];
   const captured = gameState.board[tr][tc];
-  gameState.board[tr][tc] = gameState.board[fr][fc];
+
+  // 앙파상 판별 (폰이 대각으로 빈 칸으로 이동)
+  const isEnPassant = piece?.[1]==='P' && fc!==tc && !gameState.board[tr][tc];
+  // 캐슬링 판별 (킹이 2칸 이동)
+  const isCastling = piece?.[1]==='K' && Math.abs(tc-fc)===2;
+
+  gameState.board[tr][tc] = piece;
   gameState.board[fr][fc] = null;
+
+  // 앙파상: 옆의 폰 제거
+  if (isEnPassant) gameState.board[fr][tc] = null;
+
+  // 캐슬링: 룩 이동
+  if (isCastling) {
+    const rookFromC = tc>fc ? 7 : 0;
+    const rookToC   = tc>fc ? tc-1 : tc+1;
+    gameState.board[fr][rookToC] = gameState.board[fr][rookFromC];
+    gameState.board[fr][rookFromC] = null;
+  }
 
   // 폰 승급
   if (gameState.board[tr][tc] === 'wP' && tr === 0) gameState.board[tr][tc] = 'wQ';
   if (gameState.board[tr][tc] === 'bP' && tr === 7) gameState.board[tr][tc] = 'bQ';
+
+  // 앙파상 대상 칸 업데이트
+  gameState.enPassant = (piece?.[1]==='P' && Math.abs(tr-fr)===2)
+    ? { r: (fr+tr)/2, c: fc } : null;
+
+  // 캐슬링 권리 갱신
+  if (!gameState.castling) gameState.castling = { wK:true, wKR:true, wQR:true, bK:true, bKR:true, bQR:true };
+  if (piece==='wK') gameState.castling.wK = false;
+  if (piece==='bK') gameState.castling.bK = false;
+  if (fr===7&&fc===7) gameState.castling.wKR = false;
+  if (fr===7&&fc===0) gameState.castling.wQR = false;
+  if (fr===0&&fc===7) gameState.castling.bKR = false;
+  if (fr===0&&fc===0) gameState.castling.bQR = false;
+  if (tr===7&&tc===7) gameState.castling.wKR = false;
+  if (tr===7&&tc===0) gameState.castling.wQR = false;
+  if (tr===0&&tc===7) gameState.castling.bKR = false;
+  if (tr===0&&tc===0) gameState.castling.bQR = false;
 
   gameState.selected = null;
   gameState.possibleMoves = [];
@@ -3135,6 +3235,9 @@ function getChessMoves(r, c) {
     }
     if (isEnemy(r+dir,c-1)) moves.push([r+dir,c-1]);
     if (isEnemy(r+dir,c+1)) moves.push([r+dir,c+1]);
+    // 앙파상
+    const ep = gameState.enPassant;
+    if (ep && r+dir===ep.r && Math.abs(c-ep.c)===1) moves.push([ep.r, ep.c]);
   } else if (type === 'N') {
     [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(([dr,dc])=>{
       if (canGo(r+dr,c+dc)) moves.push([r+dr,c+dc]);
@@ -3143,6 +3246,22 @@ function getChessMoves(r, c) {
     [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]].forEach(([dr,dc])=>{
       if (canGo(r+dr,c+dc)) moves.push([r+dr,c+dc]);
     });
+    // 캐슬링
+    const cr = color==='w'?7:0;
+    if (r===cr && c===4 && !isSquareAttacked(gameState.board,cr,4,enemy)) {
+      // 킹사이드
+      if (gameState.castling[color+'K'] && gameState.castling[color+'KR'] &&
+          !gameState.board[cr][5] && !gameState.board[cr][6] &&
+          !isSquareAttacked(gameState.board,cr,5,enemy) && !isSquareAttacked(gameState.board,cr,6,enemy)) {
+        moves.push([cr, 6]);
+      }
+      // 퀸사이드
+      if (gameState.castling[color+'K'] && gameState.castling[color+'QR'] &&
+          !gameState.board[cr][1] && !gameState.board[cr][2] && !gameState.board[cr][3] &&
+          !isSquareAttacked(gameState.board,cr,3,enemy) && !isSquareAttacked(gameState.board,cr,2,enemy)) {
+        moves.push([cr, 2]);
+      }
+    }
   } else if (type === 'R') {
     slide([-1,1,0,0],[0,0,-1,1]);
   } else if (type === 'B') {
@@ -3203,7 +3322,15 @@ function allChessMoves(board, col) {
 
 function applyBoardMove(board, {fr,fc,tr,tc}) {
   const nb=board.map(row=>[...row]);
-  nb[tr][tc]=nb[fr][fc]; nb[fr][fc]=null;
+  const piece=nb[fr][fc];
+  // 앙파상
+  if(piece?.[1]==='P'&&fc!==tc&&!nb[tr][tc]) nb[fr][tc]=null;
+  // 캐슬링
+  if(piece?.[1]==='K'&&Math.abs(tc-fc)===2){
+    const rfc=tc>fc?7:0, rtc=tc>fc?tc-1:tc+1;
+    nb[fr][rtc]=nb[fr][rfc]; nb[fr][rfc]=null;
+  }
+  nb[tr][tc]=piece; nb[fr][fc]=null;
   if(nb[tr][tc]==='wP'&&tr===0)nb[tr][tc]='wQ';
   if(nb[tr][tc]==='bP'&&tr===7)nb[tr][tc]='bQ';
   return nb;
@@ -3820,6 +3947,9 @@ const COND_MAP = { right_key:'오른쪽 키',left_key:'왼쪽 키',up_key:'위 �
 let bcScript = [];
 let bcSprite  = { x:240, y:180, w:40, h:40, color:'#3b82f6', shape:'emoji', emoji:'🐱', visible:true, velX:0, velY:0, label:'', dir:90, say:null, baseSize:40 };
 let bcBgColor = '#87ceeb';
+let bcBgScene = 'color'; // 'color' | scene_id | 'custom'
+let bcCustomBgImg = null; // Image object
+let bcCustomSpriteImg = null; // Image object
 let bcRuntime = null;
 let bcVars = {}, bcShownVars = new Set();
 let _bcIdCounter = 0;
@@ -4587,11 +4717,261 @@ function _bcBegHud(ctx,score,W) {
 
 // ---- Background ----
 
-function bcSetBg(color) {
-  bcBgColor = color;
-  const el = $('bcBgColor');
-  if (el) el.value = color;
+function bcSetBg(color) { bcSetBgColor(color); } // backward-compat alias
+
+function bcSetBgColor(color) {
+  bcBgColor = color; bcBgScene = 'color';
+  bcCustomBgImg = null;
+  const el = $('bcBgColor'); if (el) el.value = color;
+  const badge = $('bcCustomBgBadge'), clearBtn = $('bcClearBgImg');
+  if (badge) badge.style.display = 'none';
+  if (clearBtn) clearBtn.style.display = 'none';
+  // 씬 grid 선택 해제
+  document.querySelectorAll('.bc-scene-item').forEach(el=>el.classList.remove('active'));
   bcDrawPreview();
+}
+
+function bcSetBgScene(sceneId) {
+  bcBgScene = sceneId; bcCustomBgImg = null;
+  const badge = $('bcCustomBgBadge'), clearBtn = $('bcClearBgImg');
+  if (badge) badge.style.display = 'none';
+  if (clearBtn) clearBtn.style.display = 'none';
+  document.querySelectorAll('.bc-scene-item').forEach(el=>el.classList.toggle('active', el.dataset.scene===sceneId));
+  bcDrawPreview();
+}
+
+function bcUploadBg(event) {
+  const file = event.target.files?.[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image(); img.src = e.target.result;
+    img.onload = () => {
+      bcCustomBgImg = img; bcBgScene = 'custom';
+      document.querySelectorAll('.bc-scene-item').forEach(el=>el.classList.remove('active'));
+      const badge = $('bcCustomBgBadge'), clearBtn = $('bcClearBgImg');
+      if (badge) badge.style.display = '';
+      if (clearBtn) clearBtn.style.display = '';
+      bcDrawPreview();
+    };
+  };
+  reader.readAsDataURL(file);
+  event.target.value = '';
+}
+
+function bcClearCustomBg() {
+  bcCustomBgImg = null; bcBgScene = 'color';
+  const badge = $('bcCustomBgBadge'), clearBtn = $('bcClearBgImg');
+  if (badge) badge.style.display = 'none';
+  if (clearBtn) clearBtn.style.display = 'none';
+  bcDrawPreview();
+}
+
+function bcUploadSprite(event) {
+  const file = event.target.files?.[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image(); img.src = e.target.result;
+    img.onload = () => {
+      bcCustomSpriteImg = img;
+      bcSprite.shape = 'custom'; bcSprite.emoji = null;
+      // 선택 해제
+      document.querySelectorAll('.scratch-char').forEach(el=>el.classList.remove('active'));
+      const badge = $('bcCustomSpriteBadge'), clearBtn = $('bcClearSpriteImg');
+      if (badge) badge.style.display = '';
+      if (clearBtn) clearBtn.style.display = '';
+      const preview = $('scratchSpritePreviewEmoji');
+      if (preview) { preview.textContent=''; preview.style.backgroundImage=`url(${e.target.result})`; preview.style.backgroundSize='cover'; preview.style.backgroundPosition='center'; }
+      bcDrawPreview();
+    };
+  };
+  reader.readAsDataURL(file);
+  event.target.value = '';
+}
+
+function bcClearCustomSprite() {
+  bcCustomSpriteImg = null;
+  bcSetChar('cat');
+  const badge = $('bcCustomSpriteBadge'), clearBtn = $('bcClearSpriteImg');
+  if (badge) badge.style.display = 'none';
+  if (clearBtn) clearBtn.style.display = 'none';
+}
+
+function bcPanelTab(tab) {
+  const isSp = tab === 'sprite';
+  $('bcPanelSprite').style.display = isSp ? '' : 'none';
+  $('bcPanelBg').style.display = isSp ? 'none' : '';
+  $('bcPanelTabSprite').classList.toggle('active', isSp);
+  $('bcPanelTabBg').classList.toggle('active', !isSp);
+  if (!isSp) bcInitSceneGrid();
+}
+
+// 배경 씬 그리드 초기화 (배경 탭 처음 열 때)
+const BC_SCENES_DEF = [
+  { id:'sky',    label:'하늘' },
+  { id:'space',  label:'우주' },
+  { id:'ocean',  label:'바다' },
+  { id:'sunset', label:'노을' },
+  { id:'forest', label:'숲'   },
+  { id:'city',   label:'도시' },
+  { id:'snow',   label:'설원' },
+  { id:'beach',  label:'해변' },
+];
+let _bcScenesInited = false;
+function bcInitSceneGrid() {
+  if (_bcScenesInited) return; _bcScenesInited = true;
+  const grid = $('bcSceneGrid'); if (!grid) return;
+  grid.innerHTML = '';
+  BC_SCENES_DEF.forEach(({ id, label }) => {
+    const item = document.createElement('div');
+    item.className = 'bc-scene-item'; item.dataset.scene = id;
+    item.onclick = () => bcSetBgScene(id);
+    const cv = document.createElement('canvas'); cv.width=80; cv.height=60;
+    drawBgScene(cv.getContext('2d'), 80, 60, id);
+    const lbl = document.createElement('div'); lbl.className = 'bc-scene-label'; lbl.textContent = label;
+    item.appendChild(cv); item.appendChild(lbl);
+    grid.appendChild(item);
+  });
+}
+
+// 배경 씬 드로잉
+function drawBgScene(ctx, W, H, scene) {
+  switch(scene) {
+    case 'sky': {
+      const g=ctx.createLinearGradient(0,0,0,H);
+      g.addColorStop(0,'#1e90ff'); g.addColorStop(0.55,'#87ceeb'); g.addColorStop(1,'#c5e8f5');
+      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='#4caf50'; ctx.fillRect(0,H*.72,W,H*.28);
+      ctx.fillStyle='#388e3c'; ctx.fillRect(0,H*.75,W,H*.25);
+      ctx.fillStyle='#FFD700'; ctx.beginPath(); ctx.arc(W*.82,H*.18,W*.09,0,Math.PI*2); ctx.fill();
+      const cloud=(cx,cy,s)=>{
+        ctx.fillStyle='rgba(255,255,255,.9)';
+        [[0,0,.5],[-.3,-.15,.35],[.3,-.15,.35],[-.15,.05,.3],[.15,.05,.3]].forEach(([dx,dy,r])=>{
+          ctx.beginPath(); ctx.arc(cx+dx*s,cy+dy*s,r*s,0,Math.PI*2); ctx.fill();
+        });
+      };
+      cloud(W*.22,H*.2,W*.09); cloud(W*.6,H*.14,W*.08);
+      break;
+    }
+    case 'space': {
+      ctx.fillStyle='#050510'; ctx.fillRect(0,0,W,H);
+      const rng=n=>{let x=Math.sin(n)*43758.5;return x-Math.floor(x);};
+      for(let i=0;i<60;i++){
+        ctx.fillStyle=`rgba(255,255,255,${.3+rng(i*3)*.7})`;
+        ctx.beginPath(); ctx.arc(rng(i)*W,rng(i*2)*H,rng(i*4)*1.2+.3,0,Math.PI*2); ctx.fill();
+      }
+      const ng=ctx.createRadialGradient(W*.3,H*.45,0,W*.3,H*.45,W*.2);
+      ng.addColorStop(0,'rgba(90,0,140,.35)'); ng.addColorStop(1,'transparent');
+      ctx.fillStyle=ng; ctx.fillRect(0,0,W,H);
+      const pg=ctx.createRadialGradient(W*.78,H*.22,0,W*.78,H*.22,W*.12);
+      pg.addColorStop(0,'#ff7040'); pg.addColorStop(1,'#aa2000');
+      ctx.fillStyle=pg; ctx.beginPath(); ctx.arc(W*.78,H*.22,W*.12,0,Math.PI*2); ctx.fill();
+      break;
+    }
+    case 'ocean': {
+      const sg=ctx.createLinearGradient(0,0,0,H*.5);
+      sg.addColorStop(0,'#1a6fa0'); sg.addColorStop(1,'#87ceeb');
+      ctx.fillStyle=sg; ctx.fillRect(0,0,W,H*.5);
+      const wg=ctx.createLinearGradient(0,H*.5,0,H);
+      wg.addColorStop(0,'#0077b6'); wg.addColorStop(1,'#03045e');
+      ctx.fillStyle=wg; ctx.fillRect(0,H*.5,W,H*.5);
+      ctx.strokeStyle='rgba(255,255,255,.35)'; ctx.lineWidth=1.5;
+      for(let i=0;i<5;i++){
+        ctx.beginPath();
+        const wy=H*.5+i*H/12;
+        for(let x=0;x<=W;x+=10) i===0&&x===0?ctx.moveTo(x,wy+Math.sin(x/18+i)*4):ctx.lineTo(x,wy+Math.sin(x/18+i)*4);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'sunset': {
+      const g=ctx.createLinearGradient(0,0,0,H);
+      g.addColorStop(0,'#0f0035'); g.addColorStop(.3,'#7b2d8b');
+      g.addColorStop(.5,'#e84393'); g.addColorStop(.7,'#ff6b35');
+      g.addColorStop(.85,'#ffa500'); g.addColorStop(1,'#1a1a3e');
+      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+      const sg=ctx.createRadialGradient(W/2,H*.62,0,W/2,H*.62,W*.18);
+      sg.addColorStop(0,'rgba(255,250,160,.9)'); sg.addColorStop(.5,'rgba(255,200,0,.5)'); sg.addColorStop(1,'transparent');
+      ctx.fillStyle=sg; ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='#08000f'; ctx.beginPath(); ctx.moveTo(0,H);
+      for(let x=0;x<=W;x+=W/16) ctx.lineTo(x, H*.68+Math.sin(x/W*6)*H*.05+Math.cos(x/W*10)*H*.03);
+      ctx.lineTo(W,H); ctx.fill();
+      break;
+    }
+    case 'forest': {
+      const g=ctx.createLinearGradient(0,0,0,H);
+      g.addColorStop(0,'#1e5800'); g.addColorStop(.6,'#2d7a00'); g.addColorStop(1,'#1a3a00');
+      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+      const tree=(x,h)=>{
+        ctx.fillStyle='#3d1c00'; ctx.fillRect(x-W*.012,H-h*.35,W*.024,h*.35);
+        ctx.fillStyle='#1a5e00'; ctx.beginPath(); ctx.moveTo(x,H-h*.35-h*.42); ctx.lineTo(x-h*.3,H-h*.35); ctx.lineTo(x+h*.3,H-h*.35); ctx.fill();
+        ctx.fillStyle='#2d8000'; ctx.beginPath(); ctx.moveTo(x,H-h*.35-h*.62); ctx.lineTo(x-h*.22,H-h*.35-h*.22); ctx.lineTo(x+h*.22,H-h*.35-h*.22); ctx.fill();
+        ctx.fillStyle='#3d9a00'; ctx.beginPath(); ctx.moveTo(x,H-h*.35-h*.78); ctx.lineTo(x-h*.13,H-h*.35-h*.42); ctx.lineTo(x+h*.13,H-h*.35-h*.42); ctx.fill();
+      };
+      [[.07,80],[.22,100],[.4,90],[.57,105],[.72,95],[.87,88],[.96,75]].forEach(([xr,h])=>tree(W*xr,h));
+      ctx.fillStyle='#0d2200'; ctx.fillRect(0,H*.8,W,H*.2);
+      ctx.fillStyle='#1a4000'; ctx.fillRect(0,H*.8,W,6);
+      break;
+    }
+    case 'city': {
+      const sg=ctx.createLinearGradient(0,0,0,H);
+      sg.addColorStop(0,'#0a0a1e'); sg.addColorStop(1,'#1a1a3e');
+      ctx.fillStyle=sg; ctx.fillRect(0,0,W,H);
+      const r=n=>{let x=Math.sin(n*17.3)*43758;return x-Math.floor(x);};
+      for(let i=0;i<35;i++){ctx.fillStyle=`rgba(255,255,255,${.4+r(i)*.6})`;ctx.fillRect(r(i)*W,r(i*2)*H*.5,1.5,1.5);}
+      // 문 타워형 빌딩
+      const blgData=[[0,H*.48,W*.12],[W*.1,H*.55,W*.1],[W*.19,H*.52,W*.09],[W*.27,H*.6,W*.11],[W*.36,H*.5,W*.12],[W*.46,H*.56,W*.1],[W*.54,H*.47,W*.11],[W*.63,H*.58,W*.1],[W*.71,H*.5,W*.13],[W*.82,H*.54,W*.1],[W*.88,H*.45,W*.12]];
+      blgData.forEach(([x,y,w])=>{
+        ctx.fillStyle='#1a1a40'; ctx.fillRect(x,y,w,H-y);
+        for(let wy=y+8;wy<H-4;wy+=16) for(let wx=x+5;wx<x+w-5;wx+=11){
+          if(r(wx*wy*.001)>.35){ctx.fillStyle=`rgba(255,220,80,${.4+r(wx*wy*.002)*.6})`;ctx.fillRect(wx,wy,6,9);}
+        }
+      });
+      ctx.fillStyle='#151520'; ctx.fillRect(0,H-.08*H,W,.08*H);
+      break;
+    }
+    case 'snow': {
+      const g=ctx.createLinearGradient(0,0,0,H);
+      g.addColorStop(0,'#a0c8e0'); g.addColorStop(1,'#d8eef8');
+      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='#eef5ff'; ctx.fillRect(0,H*.68,W,H*.32);
+      ctx.fillStyle='#ddeeff'; ctx.fillRect(0,H*.68,W,8);
+      for(let i=0;i<25;i++){ctx.fillStyle='rgba(255,255,255,.85)';ctx.beginPath();ctx.arc((i*73+20)%W,(i*53+10)%H,1+i%3,0,Math.PI*2);ctx.fill();}
+      // 눈사람
+      [[W*.75,H*.85,H*.08],[W*.75,H*.72,H*.055],[W*.75,H*.61,H*.038]].forEach(([x,y,r])=>{
+        ctx.fillStyle='#fff'; ctx.strokeStyle='#aac'; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
+      });
+      ctx.fillStyle='#333'; ctx.beginPath(); ctx.arc(W*.75,H*.6,3,0,Math.PI*2); ctx.fill();
+      break;
+    }
+    case 'beach': {
+      const sg=ctx.createLinearGradient(0,0,0,H*.52);
+      sg.addColorStop(0,'#87ceeb'); sg.addColorStop(1,'#c5e8f5');
+      ctx.fillStyle=sg; ctx.fillRect(0,0,W,H*.52);
+      const wg=ctx.createLinearGradient(0,H*.52,0,H*.74);
+      wg.addColorStop(0,'#0077b6'); wg.addColorStop(1,'#48cae4');
+      ctx.fillStyle=wg; ctx.fillRect(0,H*.52,W,H*.22);
+      const bg=ctx.createLinearGradient(0,H*.74,0,H);
+      bg.addColorStop(0,'#f4d03f'); bg.addColorStop(1,'#e8b84b');
+      ctx.fillStyle=bg; ctx.fillRect(0,H*.74,W,H*.26);
+      ctx.fillStyle='#FFD700'; ctx.beginPath(); ctx.arc(W*.86,H*.13,W*.09,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,.55)'; ctx.lineWidth=2.5;
+      ctx.beginPath(); ctx.moveTo(0,H*.72);
+      for(let x=0;x<W;x+=8) ctx.lineTo(x,H*.72+Math.sin(x/20)*3);
+      ctx.stroke();
+      break;
+    }
+    default: ctx.fillStyle='#87ceeb'; ctx.fillRect(0,0,W,H);
+  }
+}
+
+// 배경 그리기 (컬러/씬/커스텀 통합)
+function bcDrawBg(ctx, W, H) {
+  if (bcBgScene==='custom' && bcCustomBgImg) {
+    ctx.drawImage(bcCustomBgImg, 0, 0, W, H); return;
+  }
+  if (bcBgScene!=='color') { drawBgScene(ctx, W, H, bcBgScene); return; }
+  ctx.fillStyle=bcBgColor; ctx.fillRect(0,0,W,H);
 }
 
 // ---- Sprite chars ----
@@ -4603,11 +4983,23 @@ const BC_CHARS = {
   bear:   { shape:'emoji', emoji:'🐻' },
   bunny:  { shape:'emoji', emoji:'🐰' },
   tiger:  { shape:'emoji', emoji:'🐯' },
+  fox:    { shape:'emoji', emoji:'🦊' },
+  lion:   { shape:'emoji', emoji:'🦁' },
   person: { shape:'emoji', emoji:'🧍' },
   robot:  { shape:'emoji', emoji:'🤖' },
+  ninja:  { shape:'emoji', emoji:'🥷' },
+  wizard: { shape:'emoji', emoji:'🧙' },
+  alien:  { shape:'emoji', emoji:'👾' },
+  ghost:  { shape:'emoji', emoji:'👻' },
   rocket: { shape:'emoji', emoji:'🚀' },
+  ufo:    { shape:'emoji', emoji:'🛸' },
   star:   { shape:'emoji', emoji:'⭐' },
+  bolt:   { shape:'emoji', emoji:'⚡' },
   ball:   { shape:'emoji', emoji:'🔴' },
+  bomb:   { shape:'emoji', emoji:'💣' },
+  sword:  { shape:'emoji', emoji:'⚔️' },
+  shield: { shape:'emoji', emoji:'🛡️' },
+  car:    { shape:'emoji', emoji:'🚗' },
   arrow:  { shape:'emoji', emoji:'➤' },
   circle:   { shape:'circle' },
   rect:     { shape:'rect' },
@@ -4656,7 +5048,9 @@ function bcDrawSprite(ctx, sp) {
   ctx.translate(x, y);
   const angle = dir !== undefined ? (dir - 90) * Math.PI / 180 : 0;
   ctx.rotate(angle);
-  if (shape==='emoji' && emoji) {
+  if (shape==='custom' && bcCustomSpriteImg) {
+    ctx.drawImage(bcCustomSpriteImg, -w/2, -h/2, w, h);
+  } else if (shape==='emoji' && emoji) {
     ctx.font = `${w}px serif`;
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillText(emoji, 0, 0);
@@ -4678,7 +5072,7 @@ function bcDrawPreview() {
   const canvas=$('bcCanvas'); if(!canvas) return;
   const ctx=canvas.getContext('2d');
   const W=canvas.width, H=canvas.height;
-  ctx.fillStyle=bcBgColor; ctx.fillRect(0,0,W,H);
+  bcDrawBg(ctx, W, H);
   bcDrawSprite(ctx, bcSprite);
   // Speech bubble
   if (bcSprite.say) {
@@ -4897,7 +5291,7 @@ async function bcSubmit(){
   if(!title){showToast('게임 제목을 입력해주세요!','error');return;}
   if(bcScript.length===0){showToast('블록을 추가해주세요!','error');return;}
   bcStop();
-  const program={script:bcScript,sprite:bcSprite,bgColor:bcBgColor};
+  const program={script:bcScript,sprite:bcSprite,bgColor:bcBgColor,bgScene:bcBgScene};
   try{
     const res=await fetch('/api/block-games',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:USER.id,nickname:USER.nickname,title,program})});
     const data=await res.json();
@@ -4950,7 +5344,7 @@ function userGameRun(){
   const prog=window._ugProgram; if(!prog) return;
   const canvas=$('userGameCanvas'),W=canvas.width,H=canvas.height;
   const sprite={...prog.sprite,velX:0,velY:0,visible:true};
-  const script=prog.script||[],bgColor=prog.bgColor||'#87ceeb';
+  const script=prog.script||[],bgColor=prog.bgColor||'#87ceeb',bgScene=prog.bgScene||'color';
   let vars={},shownVars=new Set(),running=true;
   const keyState={};
   const onKD=e=>keyState[e.key]=true,onKU=e=>keyState[e.key]=false;
@@ -4999,7 +5393,7 @@ function userGameRun(){
   function draw(){
     if(!running)return;
     const ctx=canvas.getContext('2d');
-    ctx.fillStyle=bgColor;ctx.fillRect(0,0,W,H);
+    if(bgScene!=='color'){drawBgScene(ctx,W,H,bgScene);}else{ctx.fillStyle=bgColor;ctx.fillRect(0,0,W,H);}
     bcDrawSprite(ctx, sprite);
     let vy=14;
     shownVars.forEach(name=>{ctx.fillStyle='rgba(0,0,0,.65)';ctx.fillRect(4,vy-11,100,16);ctx.fillStyle='#fff';ctx.font='11px sans-serif';ctx.textAlign='left';ctx.fillText(`${name}: ${vars[name]??0}`,8,vy);vy+=19;});
@@ -5086,6 +5480,13 @@ window.bcBegSetBg       = bcBegSetBg;
 window.bcBegRun         = bcBegRun;
 window.bcBegStop        = bcBegStop;
 window.bcBegCanvasClick = bcBegCanvasClick;
+window.bcSetBgColor     = bcSetBgColor;
+window.bcSetBgScene     = bcSetBgScene;
+window.bcUploadBg       = bcUploadBg;
+window.bcClearCustomBg  = bcClearCustomBg;
+window.bcUploadSprite   = bcUploadSprite;
+window.bcClearCustomSprite = bcClearCustomSprite;
+window.bcPanelTab       = bcPanelTab;
 window.loadUserGames    = loadUserGames;
 window.openUserGame     = openUserGame;
 window.closeUserGame    = closeUserGame;
