@@ -157,6 +157,28 @@ setInterval(() => {
   if (changed) saveSessions();
 }, 60 * 60 * 1000);
 
+// MongoDB 자동 저장 (60초)
+setInterval(async () => {
+  if (useDB) {
+    try {
+      await dbSet('posts', posts);
+      await dbSet('likes', likes);
+      await dbSet('comments', comments);
+    } catch (e) { console.error('[AutoSave] 오류:', e.message); }
+  }
+}, 60 * 1000);
+
+// 소프트 삭제 게시글 정리 (30일 이후 완전 삭제, 1일마다)
+setInterval(() => {
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const before = posts.length;
+  posts = posts.filter(p => !p.deleted || !p.deletedAt || new Date(p.deletedAt) >= cutoff);
+  if (posts.length < before) {
+    savePosts();
+    console.log(`[Cleanup] 오래된 삭제 게시글 ${before - posts.length}개 제거됨`);
+  }
+}, 24 * 60 * 60 * 1000);
+
 // =============================================
 // 인증 헬퍼
 // =============================================
@@ -538,7 +560,7 @@ app.put('/api/auth/password', authMiddleware, (req, res) => {
 app.get('/api/posts', (req, res) => {
   try {
     const { search = '', page = 1, limit = 10 } = req.query;
-    let filtered = [...posts].reverse();
+    let filtered = [...posts].reverse().filter(p => !p.deleted);
     if (search.trim()) {
       const q = search.toLowerCase();
       filtered = filtered.filter(p => p.content.toLowerCase().includes(q) || p.author.toLowerCase().includes(q));
@@ -590,7 +612,7 @@ app.delete('/api/posts/:id', (req, res) => {
   try {
     const { id } = req.params;
     const { authorId } = req.body;
-    const idx = posts.findIndex(p => p.id === id);
+    const idx = posts.findIndex(p => p.id === id && !p.deleted);
     if (idx === -1) return res.status(404).json({ error: '게시글 없음' });
     if (posts[idx].authorId !== authorId) return res.status(403).json({ error: '권한 없음' });
 
@@ -598,11 +620,12 @@ app.delete('/api/posts/:id', (req, res) => {
       const fp = path.join('uploads', f.filename);
       if (fs.existsSync(fp)) fs.unlinkSync(fp);
     });
-    posts.splice(idx, 1);
-    delete likes[id]; delete comments[id];
+    // 소프트 삭제 — likes는 랭킹 집계를 위해 유지
+    posts[idx].deleted = true;
+    posts[idx].deletedAt = new Date().toISOString();
     if (rankingsData.pinnedPostId === id) { rankingsData.pinnedPostId = null; saveRankings(); }
     if (rankingsData.recommendedPostId === id) { rankingsData.recommendedPostId = null; saveRankings(); }
-    savePosts(); saveLikes(); saveComments();
+    savePosts();
     io.emit('deletePost', id);
     res.json({ success: true });
   } catch { res.status(500).json({ error: '삭제 실패' }); }
@@ -644,18 +667,16 @@ app.post('/api/posts/:id/like', (req, res) => {
     const { id } = req.params;
     const { userId, type = '👍' } = req.body;
     if (!LIKE_TYPES.includes(type)) return res.status(400).json({ error: '잘못된 좋아요 타입' });
-    if (!posts.find(p => p.id === id)) return res.status(404).json({ error: '게시글 없음' });
+    if (!posts.find(p => p.id === id && !p.deleted)) return res.status(404).json({ error: '게시글 없음' });
 
     if (!likes[id]) likes[id] = { '👍': [], '😂': [], '🧠': [], '💀': [] };
 
-    // 기존 좋아요 타입 제거
     let prevType = null;
     for (const t of LIKE_TYPES) {
       const idx = likes[id][t].indexOf(userId);
       if (idx !== -1) { likes[id][t].splice(idx, 1); prevType = t; }
     }
 
-    // 같은 타입 = 좋아요 취소, 다른 타입 = 변경
     let liked = false;
     if (prevType !== type) { likes[id][type].push(userId); liked = true; }
 
@@ -663,6 +684,11 @@ app.post('/api/posts/:id/like', (req, res) => {
     const breakdown = getLikeBreakdown(id);
     const update = { postId: id, breakdown, totalLikes: getTotalLikes(id), userId, liked, type };
     io.emit('likeUpdate', update);
+
+    // 실시간 랭킹 업데이트
+    const liveTop10 = calculateWeeklyRankings();
+    io.emit('rankingsUpdate', enrichTop10(liveTop10));
+
     res.json(update);
   } catch { res.status(500).json({ error: '좋아요 실패' }); }
 });
@@ -698,10 +724,11 @@ app.get('/api/users/:userId/profile', (req, res) => {
   const { userId } = req.params;
   const member = members[userId];
   if (!member) return res.status(404).json({ error: '사용자 없음' });
-  const myPosts = posts.filter(p => p.authorId === userId);
+  const myPosts = posts.filter(p => p.authorId === userId); // 삭제된 것도 포함 (좋아요 집계용)
+  const myActivePosts = myPosts.filter(p => !p.deleted);
   const breakdown = { '👍': 0, '😂': 0, '🧠': 0, '💀': 0 };
   let total = 0;
-  for (const p of myPosts) {
+  for (const p of myPosts) {  // 삭제된 게시글의 좋아요도 포함
     for (const t of LIKE_TYPES) {
       const cnt = likes[p.id]?.[t]?.length || 0;
       breakdown[t] += cnt; total += cnt;
@@ -714,8 +741,8 @@ app.get('/api/users/:userId/profile', (req, res) => {
     isOnline,
     totalLikes: total,
     likeBreakdown: breakdown,
-    postCount: myPosts.length,
-    recentPosts: myPosts.reverse().slice(0, 5).map(postResponse),
+    postCount: myActivePosts.length,
+    recentPosts: myActivePosts.slice().reverse().slice(0, 5).map(postResponse),
     rank: ranked || null,
   });
 });
@@ -742,7 +769,7 @@ app.get('/api/rankings', (req, res) => {
 // 유저별 총 좋아요 합계 (프로필용)
 app.get('/api/users/:userId/likes', (req, res) => {
   const { userId } = req.params;
-  const myPosts = posts.filter(p => p.authorId === userId);
+  const myPosts = posts.filter(p => p.authorId === userId); // 삭제된 것도 포함
   const breakdown = { '👍': 0, '😂': 0, '🧠': 0, '💀': 0 };
   let total = 0;
   for (const p of myPosts) {
@@ -828,18 +855,18 @@ app.delete('/api/admin/posts/:id', (req, res) => {
   const { password } = req.body;
   if (!isAdmin(password)) return res.status(401).json({ error: '권한 없음' });
   const { id } = req.params;
-  const idx = posts.findIndex(p => p.id === id);
+  const idx = posts.findIndex(p => p.id === id && !p.deleted);
   if (idx === -1) return res.status(404).json({ error: '게시글 없음' });
 
   posts[idx].files.forEach(f => {
     const fp = path.join('uploads', f.filename);
     if (fs.existsSync(fp)) fs.unlinkSync(fp);
   });
-  posts.splice(idx, 1);
-  delete likes[id]; delete comments[id];
+  posts[idx].deleted = true;
+  posts[idx].deletedAt = new Date().toISOString();
   if (rankingsData.pinnedPostId === id) { rankingsData.pinnedPostId = null; saveRankings(); }
   if (rankingsData.recommendedPostId === id) { rankingsData.recommendedPostId = null; saveRankings(); }
-  savePosts(); saveLikes(); saveComments();
+  savePosts();
   io.emit('deletePost', id);
   res.json({ success: true });
 });

@@ -551,6 +551,13 @@ function connectSocket() {
 
   socket.on('rankingsUpdate', (top10) => {
     state.rankingsData.top10 = top10 || [];
+    if (state.currentView === 'ranking') {
+      renderRankings({
+        week: state.rankingsData.lastWeek || state.rankingsData.week,
+        top10: state.rankingsData.top10,
+        hallOfFame: state.rankingsData.hallOfFame,
+      });
+    }
   });
 
   socket.on('adminWarning', ({ message }) => {
@@ -1146,6 +1153,9 @@ async function loadRankings() {
     const res = await fetch('/api/rankings');
     const data = await res.json();
     state.rankingsData = { ...state.rankingsData, ...data };
+    // store full data for real-time re-renders
+    state.rankingsData.week = data.week;
+    state.rankingsData.hallOfFame = data.hallOfFame;
     renderRankings(data);
   } catch {
     showToast('랭킹 로딩 실패', 'error');
