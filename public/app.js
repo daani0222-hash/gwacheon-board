@@ -1,7 +1,7 @@
 /**
- * app.js - 과천중 비밀게시판 클라이언트 v2.09
+ * app.js - 과천중 비밀게시판 클라이언트 v2.10
  */
-console.log('%c과천중 게임존 v2.09 로드됨 ✅', 'color:#6366f1;font-weight:bold;font-size:14px');
+console.log('%c과천중 게임존 v2.10 로드됨 ✅', 'color:#6366f1;font-weight:bold;font-size:14px');
 
 // =============================================
 // 인증 토큰
@@ -2340,9 +2340,28 @@ function openGame(type) {
     if (modeBtns) modeBtns.innerHTML = `<button class="btn btn-primary" onclick="startGame('ai')"><i class="fa-solid fa-play"></i> 시작하기</button>`;
   } else {
     if (diffSel) diffSel.classList.remove('hidden');
-    document.querySelectorAll('.diff-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.diff === (gameState.difficulty || 'medium'));
-    });
+    if (type === 'chess') {
+      const chessRatings = [100, 300, 500, 700, 900, 1100, 1300, 1500, 1700, 1900, 2100, 2300, 2500];
+      const curDiff = parseInt(gameState.difficulty) || 300;
+      const diffLabel = diffSel.querySelector('.diff-label');
+      const diffBtns = diffSel.querySelector('.diff-btns');
+      if (diffLabel) diffLabel.innerHTML = '<i class="fa-solid fa-robot"></i> AI 레이팅 선택';
+      if (diffBtns) diffBtns.innerHTML = chessRatings.map(r =>
+        `<button class="diff-btn${r === curDiff ? ' active' : ''}" data-diff="${r}" onclick="setDifficulty('${r}')">${r}</button>`
+      ).join('');
+      if (!parseInt(gameState.difficulty)) gameState.difficulty = '300';
+    } else {
+      const diffLabel = diffSel.querySelector('.diff-label');
+      const diffBtns = diffSel.querySelector('.diff-btns');
+      if (diffLabel) diffLabel.innerHTML = '<i class="fa-solid fa-gauge"></i> AI 난이도 선택';
+      if (diffBtns) diffBtns.innerHTML = `
+        <button class="diff-btn" data-diff="easy" onclick="setDifficulty('easy')">🟢 쉬움</button>
+        <button class="diff-btn active" data-diff="medium" onclick="setDifficulty('medium')">🟡 보통</button>
+        <button class="diff-btn" data-diff="hard" onclick="setDifficulty('hard')">🔴 어려움</button>`;
+      document.querySelectorAll('.diff-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.diff === (gameState.difficulty || 'medium'));
+      });
+    }
     if (modeBtns) modeBtns.innerHTML = `
       <button class="btn btn-primary" onclick="startGame('ai')"><i class="fa-solid fa-robot"></i> 1인용 (AI 대전)</button>
       <button class="btn btn-outline" onclick="showMultiLobby()"><i class="fa-solid fa-user-group"></i> 2인용 (온라인)</button>`;
@@ -2399,37 +2418,36 @@ function restartGame() {
 }
 
 // =============================================
-// 레이팅 시스템 (ELO)
+// 레이팅 시스템
 // =============================================
 function getGameRating(type) {
   const ratings = JSON.parse(localStorage.getItem('gwacheon_ratings') || '{}');
-  return ratings[type] || 1200;
+  return ratings[type] !== undefined ? ratings[type] : 300;
 }
 
 function setGameRating(type, val) {
   const ratings = JSON.parse(localStorage.getItem('gwacheon_ratings') || '{}');
-  ratings[type] = Math.max(100, Math.round(val));
+  ratings[type] = Math.max(0, Math.round(val));
   localStorage.setItem('gwacheon_ratings', JSON.stringify(ratings));
 }
 
 function updateRating(type, result) {
   if (gameState.mode !== 'ai') return;
-  const K = 32;
-  const diffMap = { easy: 800, medium: 1200, hard: 1700 };
-  const aiRating = diffMap[gameState.difficulty] || 1200;
   const myRating = getGameRating(type);
-  const expected = 1 / (1 + Math.pow(10, (aiRating - myRating) / 400));
-  const sc = result === 'win' ? 1 : result === 'draw' ? 0.5 : 0;
-  const newRating = myRating + K * (sc - expected);
+  let newRating = myRating;
+  if (result === 'win') newRating = myRating + 10;
+  else if (result === 'loss') newRating = Math.max(0, myRating - 8);
+  else if (result === 'draw') newRating = myRating + 1;
   setGameRating(type, newRating);
   return Math.round(newRating);
 }
 
 function getRatingBadge(rating) {
   if (rating >= 2000) return { label: 'Master', color: '#f59e0b' };
-  if (rating >= 1600) return { label: 'Gold', color: '#eab308' };
-  if (rating >= 1400) return { label: 'Silver', color: '#94a3b8' };
-  if (rating >= 1200) return { label: 'Bronze', color: '#b45309' };
+  if (rating >= 1500) return { label: 'Diamond', color: '#818cf8' };
+  if (rating >= 1000) return { label: 'Gold', color: '#eab308' };
+  if (rating >= 700)  return { label: 'Silver', color: '#94a3b8' };
+  if (rating >= 400)  return { label: 'Bronze', color: '#b45309' };
   return { label: 'Rookie', color: '#6b7280' };
 }
 
@@ -3001,32 +3019,44 @@ const CHESS_PIECES = {
 };
 
 // =============================================
-// 채팅 알림 바
+// 채팅 알림 팝업
 // =============================================
 function showChatNotif(nickname, content, type) {
-  if (state.currentView === 'chat') return; // 채팅 화면이면 표시 안 함
+  if (state.currentView === 'chat') return;
+
+  // 중복 방지 (같은 닉네임 0.6초 내 재알림 무시)
+  if (!window._chatNotifLast) window._chatNotifLast = {};
+  const now = Date.now();
+  if (window._chatNotifLast[nickname] && now - window._chatNotifLast[nickname] < 600) return;
+  window._chatNotifLast[nickname] = now;
+
   const bar = document.getElementById('chatNotifBar');
   if (!bar) return;
-  // 같은 사람 연속 알림 방지 (0.5초 내)
-  if (bar._lastNick === nickname && bar._lastTime && Date.now() - bar._lastTime < 500) return;
-  bar._lastNick = nickname; bar._lastTime = Date.now();
+
+  const icon = type === 'dm' ? '💬' : type === 'group' ? '👥' : '🌏';
+  const preview = content ? String(content).slice(0, 40) + (content.length > 40 ? '…' : '') : '(미디어)';
 
   const item = document.createElement('div');
   item.className = 'chat-notif-item';
-  const icon = type === 'dm' ? '💬' : type === 'group' ? '👥' : '🌏';
-  const preview = content ? content.slice(0, 36) + (content.length > 36 ? '…' : '') : '(미디어)';
-  item.innerHTML = `<span style="font-size:15px">${icon}</span><strong>${nickname}</strong><span style="opacity:.8;overflow:hidden;text-overflow:ellipsis">: ${preview}</span>`;
-  item.onclick = () => { switchView('chat'); item.remove(); };
+  item.innerHTML =
+    `<span class="cni-icon">${icon}</span>` +
+    `<span class="cni-nick">${nickname}</span>` +
+    `<span class="cni-msg">: ${preview}</span>`;
+
+  item.addEventListener('click', () => { switchView('chat'); item.remove(); });
   bar.appendChild(item);
 
-  setTimeout(() => {
-    item.style.cssText += 'opacity:0;transition:opacity .3s';
-    setTimeout(() => item.remove(), 320);
+  // 4초 후 페이드아웃
+  const fadeTimer = setTimeout(() => {
+    item.classList.add('cni-fade');
+    setTimeout(() => item.remove(), 350);
   }, 4000);
+
+  item.addEventListener('click', () => clearTimeout(fadeTimer), { once: true });
 }
 
 // =============================================
-// 체스 – 앙파상 / 캐슬링 헬퍼
+// 체스 엔진 (앙파상, 캐슬링, 체크메이트 포함)
 // =============================================
 function isSquareAttacked(board, r, c, byColor) {
   const inB = (r,c) => r>=0&&r<8&&c>=0&&c<8;
@@ -3057,8 +3087,89 @@ function isSquareAttacked(board, r, c, byColor) {
   return false;
 }
 
+// 킹이 체크 상태인지 확인
+function chessKingInCheck(board, color) {
+  let kr=-1, kc=-1;
+  for (let r=0;r<8&&kr<0;r++) for (let c=0;c<8&&kr<0;c++)
+    if (board[r][c]===color+'K') { kr=r; kc=c; }
+  if (kr<0) return false;
+  return isSquareAttacked(board, kr, kc, color==='w'?'b':'w');
+}
+
+// 수도-합법 기물 이동 생성 (앙파상, 캐슬링 포함)
+function chessPseudoMoves(r, c, board, enPassant, castling) {
+  const piece = board[r][c]; if (!piece) return [];
+  const color=piece[0], type=piece[1], enemy=color==='w'?'b':'w', dir=color==='w'?-1:1;
+  const moves=[];
+  const inB=(r,c)=>r>=0&&r<8&&c>=0&&c<8;
+  const emp=(r,c)=>inB(r,c)&&!board[r][c];
+  const isE=(r,c)=>inB(r,c)&&board[r][c]?.startsWith(enemy);
+  const can=(r,c)=>emp(r,c)||isE(r,c);
+  const sld=(drs,dcs)=>{for(let i=0;i<drs.length;i++){let nr=r+drs[i],nc=c+dcs[i];while(inB(nr,nc)){if(board[nr][nc]){if(isE(nr,nc))moves.push([nr,nc]);break;}moves.push([nr,nc]);nr+=drs[i];nc+=dcs[i];}}};
+  if(type==='P'){
+    if(emp(r+dir,c)){moves.push([r+dir,c]);const sr=color==='w'?6:1;if(r===sr&&emp(r+dir*2,c))moves.push([r+dir*2,c]);}
+    if(isE(r+dir,c-1))moves.push([r+dir,c-1]);
+    if(isE(r+dir,c+1))moves.push([r+dir,c+1]);
+    if(enPassant&&r+dir===enPassant.r&&Math.abs(c-enPassant.c)===1)moves.push([enPassant.r,enPassant.c]);
+  } else if(type==='N'){
+    [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(([dr,dc])=>{if(can(r+dr,c+dc))moves.push([r+dr,c+dc]);});
+  } else if(type==='K'){
+    [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]].forEach(([dr,dc])=>{if(can(r+dr,c+dc))moves.push([r+dr,c+dc]);});
+    if(castling){
+      const cr=color==='w'?7:0;
+      if(r===cr&&c===4&&!isSquareAttacked(board,cr,4,enemy)){
+        if(castling[color+'K']&&castling[color+'KR']&&!board[cr][5]&&!board[cr][6]&&
+           !isSquareAttacked(board,cr,5,enemy)&&!isSquareAttacked(board,cr,6,enemy))moves.push([cr,6]);
+        if(castling[color+'K']&&castling[color+'QR']&&!board[cr][1]&&!board[cr][2]&&!board[cr][3]&&
+           !isSquareAttacked(board,cr,3,enemy)&&!isSquareAttacked(board,cr,2,enemy))moves.push([cr,2]);
+      }
+    }
+  } else if(type==='R')sld([-1,1,0,0],[0,0,-1,1]);
+  else if(type==='B')sld([-1,-1,1,1],[-1,1,-1,1]);
+  else if(type==='Q')sld([-1,1,0,0,-1,-1,1,1],[0,0,-1,1,-1,1,-1,1]);
+  return moves;
+}
+
+// 이동 적용 후 새 상태 반환
+function applyMoveToState(board, {fr,fc,tr,tc}, enPassant, castling) {
+  const nb=board.map(row=>[...row]);
+  const piece=nb[fr][fc];
+  const nc2={...castling};
+  if(piece?.[1]==='P'&&fc!==tc&&!nb[tr][tc])nb[fr][tc]=null; // 앙파상 캡처
+  if(piece?.[1]==='K'&&Math.abs(tc-fc)===2){const rfc=tc>fc?7:0,rtc=tc>fc?tc-1:tc+1;nb[fr][rtc]=nb[fr][rfc];nb[fr][rfc]=null;} // 캐슬링
+  nb[tr][tc]=piece; nb[fr][fc]=null;
+  if(nb[tr][tc]==='wP'&&tr===0)nb[tr][tc]='wQ';
+  if(nb[tr][tc]==='bP'&&tr===7)nb[tr][tc]='bQ';
+  if(piece==='wK')nc2.wK=false; if(piece==='bK')nc2.bK=false;
+  if((fr===7&&fc===7)||(tr===7&&tc===7))nc2.wKR=false;
+  if((fr===7&&fc===0)||(tr===7&&tc===0))nc2.wQR=false;
+  if((fr===0&&fc===7)||(tr===0&&tc===7))nc2.bKR=false;
+  if((fr===0&&fc===0)||(tr===0&&tc===0))nc2.bQR=false;
+  const nep=(piece?.[1]==='P'&&Math.abs(tr-fr)===2)?{r:(fr+tr)/2,c:fc}:null;
+  return {board:nb, enPassant:nep, castling:nc2};
+}
+
+// 합법 이동 (킹 체크 남기는 이동 제거)
+function chessLegalMoves(r, c, board, enPassant, castling) {
+  const piece=board[r][c]; if(!piece) return [];
+  const color=piece[0];
+  return chessPseudoMoves(r,c,board,enPassant,castling).filter(([tr,tc])=>{
+    const {board:nb}=applyMoveToState(board,{fr:r,fc:c,tr,tc},enPassant,castling);
+    return !chessKingInCheck(nb,color);
+  });
+}
+
+// 특정 색 전체 합법 이동
+function allLegalMoves(board, enPassant, castling, color) {
+  const moves=[];
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    if(!board[r][c]?.startsWith(color))continue;
+    for(const [tr,tc] of chessLegalMoves(r,c,board,enPassant,castling))moves.push({fr:r,fc:c,tr,tc});
+  }
+  return moves;
+}
+
 function initChess(mode) {
-  // 초기 배치
   const INIT = [
     ['bR','bN','bB','bQ','bK','bB','bN','bR'],
     ['bP','bP','bP','bP','bP','bP','bP','bP'],
@@ -3071,11 +3182,11 @@ function initChess(mode) {
   ];
   gameState.board = INIT.map(r => [...r]);
   gameState.isOver = false;
-  gameState.mySymbol = 'w'; // 플레이어는 흰색
+  gameState.mySymbol = 'w';
   gameState.myTurn = true;
   gameState.selected = null;
   gameState.possibleMoves = [];
-  gameState.enPassant = null; // { r, c } 앙파상 대상 칸
+  gameState.enPassant = null;
   gameState.castling = { wK:true, wKR:true, wQR:true, bK:true, bKR:true, bQR:true };
 
   const inner = $('gameBoardInner');
@@ -3091,6 +3202,9 @@ function renderChessBoard() {
   const grid = document.createElement('div');
   grid.className = 'chess-board';
 
+  const wInCheck = chessKingInCheck(gameState.board, 'w');
+  const bInCheck = chessKingInCheck(gameState.board, 'b');
+
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       const cell = document.createElement('div');
@@ -3103,7 +3217,12 @@ function renderChessBoard() {
         cell.classList.add('possible');
 
       const piece = gameState.board[r][c];
-      if (piece) cell.textContent = CHESS_PIECES[piece];
+      if (piece) {
+        const isW = piece.startsWith('w');
+        if (piece[1] === 'K' && ((isW && wInCheck) || (!isW && bInCheck)))
+          cell.classList.add('in-check');
+        cell.innerHTML = `<span class="${isW ? 'chess-piece-w' : 'chess-piece-b'}">${CHESS_PIECES[piece]}</span>`;
+      }
 
       cell.addEventListener('click', () => handleChessClick(r, c));
       grid.appendChild(cell);
@@ -3116,78 +3235,46 @@ function handleChessClick(r, c) {
   if (gameState.isOver || !gameState.myTurn) return;
   const piece = gameState.board[r][c];
 
-  // 이동 가능한 칸 클릭
   if (gameState.selected && gameState.possibleMoves.some(([pr,pc]) => pr === r && pc === c)) {
     applyChessMove(gameState.selected[0], gameState.selected[1], r, c, true);
     return;
   }
 
-  // 내 말 선택
   if (piece && piece.startsWith(gameState.mySymbol)) {
     gameState.selected = [r, c];
-    gameState.possibleMoves = getChessMoves(r, c);
+    gameState.possibleMoves = chessLegalMoves(r, c, gameState.board, gameState.enPassant, gameState.castling);
     renderChessBoard();
     return;
   }
 
-  // 선택 취소
   gameState.selected = null;
   gameState.possibleMoves = [];
   renderChessBoard();
 }
 
 function applyChessMove(fr, fc, tr, tc, isMe) {
-  const piece = gameState.board[fr][fc];
-  const captured = gameState.board[tr][tc];
-
-  // 앙파상 판별 (폰이 대각으로 빈 칸으로 이동)
-  const isEnPassant = piece?.[1]==='P' && fc!==tc && !gameState.board[tr][tc];
-  // 캐슬링 판별 (킹이 2칸 이동)
-  const isCastling = piece?.[1]==='K' && Math.abs(tc-fc)===2;
-
-  gameState.board[tr][tc] = piece;
-  gameState.board[fr][fc] = null;
-
-  // 앙파상: 옆의 폰 제거
-  if (isEnPassant) gameState.board[fr][tc] = null;
-
-  // 캐슬링: 룩 이동
-  if (isCastling) {
-    const rookFromC = tc>fc ? 7 : 0;
-    const rookToC   = tc>fc ? tc-1 : tc+1;
-    gameState.board[fr][rookToC] = gameState.board[fr][rookFromC];
-    gameState.board[fr][rookFromC] = null;
-  }
-
-  // 폰 승급
-  if (gameState.board[tr][tc] === 'wP' && tr === 0) gameState.board[tr][tc] = 'wQ';
-  if (gameState.board[tr][tc] === 'bP' && tr === 7) gameState.board[tr][tc] = 'bQ';
-
-  // 앙파상 대상 칸 업데이트
-  gameState.enPassant = (piece?.[1]==='P' && Math.abs(tr-fr)===2)
-    ? { r: (fr+tr)/2, c: fc } : null;
-
-  // 캐슬링 권리 갱신
-  if (!gameState.castling) gameState.castling = { wK:true, wKR:true, wQR:true, bK:true, bKR:true, bQR:true };
-  if (piece==='wK') gameState.castling.wK = false;
-  if (piece==='bK') gameState.castling.bK = false;
-  if (fr===7&&fc===7) gameState.castling.wKR = false;
-  if (fr===7&&fc===0) gameState.castling.wQR = false;
-  if (fr===0&&fc===7) gameState.castling.bKR = false;
-  if (fr===0&&fc===0) gameState.castling.bQR = false;
-  if (tr===7&&tc===7) gameState.castling.wKR = false;
-  if (tr===7&&tc===0) gameState.castling.wQR = false;
-  if (tr===0&&tc===7) gameState.castling.bKR = false;
-  if (tr===0&&tc===0) gameState.castling.bQR = false;
-
+  const {board:nb, enPassant:nep, castling:nc} = applyMoveToState(gameState.board, {fr,fc,tr,tc}, gameState.enPassant, gameState.castling);
+  gameState.board = nb;
+  gameState.enPassant = nep;
+  gameState.castling = nc;
   gameState.selected = null;
   gameState.possibleMoves = [];
 
-  if (captured === 'bK' || captured === 'wK') {
+  // 상대 색 체크메이트/스테일메이트 확인
+  const oppColor = isMe ? (gameState.mySymbol === 'w' ? 'b' : 'w') : gameState.mySymbol;
+  const oppMoves = allLegalMoves(gameState.board, gameState.enPassant, gameState.castling, oppColor);
+  const oppInCheck = chessKingInCheck(gameState.board, oppColor);
+
+  if (oppMoves.length === 0) {
     gameState.isOver = true;
     renderChessBoard();
-    if (gameState.mode === 'ai') { updateRating('chess', isMe ? 'win' : 'loss'); showRatingBar('chess'); }
-    $('gameStatus').textContent = isMe ? '🎉 승리! 왕을 잡았습니다!' : '😢 패배! 왕을 잡혔습니다!';
+    if (oppInCheck) {
+      if (gameState.mode === 'ai') { updateRating('chess', isMe ? 'win' : 'loss'); showRatingBar('chess'); }
+      $('gameStatus').textContent = isMe ? '🎉 체크메이트! 승리!' : '😢 체크메이트! 패배!';
+    } else {
+      if (gameState.mode === 'ai') { updateRating('chess', 'draw'); showRatingBar('chess'); }
+      $('gameStatus').textContent = '🤝 스테일메이트! 무승부!';
+    }
     if (gameState.mode === 'multi') socket.emit('gameEnd', { roomId: gameState.roomId, result: {} });
     return;
   }
@@ -3195,84 +3282,20 @@ function applyChessMove(fr, fc, tr, tc, isMe) {
   gameState.myTurn = !isMe;
   renderChessBoard();
 
+  const myInCheck = chessKingInCheck(gameState.board, gameState.mySymbol);
+
   if (gameState.mode === 'multi' && isMe) {
     socket.emit('gameMove', { roomId: gameState.roomId, move: { fr, fc, tr, tc } });
-    $('gameStatus').textContent = '상대방 차례...';
+    $('gameStatus').textContent = oppInCheck ? '상대 체크! 상대방 차례...' : '상대방 차례...';
   } else if (gameState.mode === 'ai' && isMe && !gameState.isOver) {
-    $('gameStatus').textContent = 'AI 생각 중...';
+    $('gameStatus').textContent = oppInCheck ? 'AI 체크! AI 생각 중...' : 'AI 생각 중...';
     setTimeout(chessAIMove, 400);
+  } else if (gameState.mode === 'ai' && !isMe && !gameState.isOver) {
+    $('gameStatus').textContent = myInCheck ? '⚠️ 체크! 킹을 지키세요!' : '내 차례 (흰색 ♙)';
   }
 }
 
-function getChessMoves(r, c) {
-  const piece = gameState.board[r][c];
-  if (!piece) return [];
-  const color = piece[0], type = piece[1];
-  const moves = [];
-  const enemy = color === 'w' ? 'b' : 'w';
-  const dir = color === 'w' ? -1 : 1;
-
-  const inBounds = (r,c) => r>=0&&r<8&&c>=0&&c<8;
-  const isEmpty = (r,c) => inBounds(r,c) && !gameState.board[r][c];
-  const isEnemy = (r,c) => inBounds(r,c) && gameState.board[r][c]?.startsWith(enemy);
-  const canGo = (r,c) => isEmpty(r,c) || isEnemy(r,c);
-
-  const slide = (drs, dcs) => {
-    for (let i=0;i<drs.length;i++) {
-      let nr=r+drs[i], nc=c+dcs[i];
-      while (inBounds(nr,nc)) {
-        if (gameState.board[nr][nc]) { if (isEnemy(nr,nc)) moves.push([nr,nc]); break; }
-        moves.push([nr,nc]); nr+=drs[i]; nc+=dcs[i];
-      }
-    }
-  };
-
-  if (type === 'P') {
-    if (isEmpty(r+dir,c)) {
-      moves.push([r+dir,c]);
-      const startRow = color==='w'?6:1;
-      if (r===startRow && isEmpty(r+dir*2,c)) moves.push([r+dir*2,c]);
-    }
-    if (isEnemy(r+dir,c-1)) moves.push([r+dir,c-1]);
-    if (isEnemy(r+dir,c+1)) moves.push([r+dir,c+1]);
-    // 앙파상
-    const ep = gameState.enPassant;
-    if (ep && r+dir===ep.r && Math.abs(c-ep.c)===1) moves.push([ep.r, ep.c]);
-  } else if (type === 'N') {
-    [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(([dr,dc])=>{
-      if (canGo(r+dr,c+dc)) moves.push([r+dr,c+dc]);
-    });
-  } else if (type === 'K') {
-    [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]].forEach(([dr,dc])=>{
-      if (canGo(r+dr,c+dc)) moves.push([r+dr,c+dc]);
-    });
-    // 캐슬링
-    const cr = color==='w'?7:0;
-    if (r===cr && c===4 && !isSquareAttacked(gameState.board,cr,4,enemy)) {
-      // 킹사이드
-      if (gameState.castling[color+'K'] && gameState.castling[color+'KR'] &&
-          !gameState.board[cr][5] && !gameState.board[cr][6] &&
-          !isSquareAttacked(gameState.board,cr,5,enemy) && !isSquareAttacked(gameState.board,cr,6,enemy)) {
-        moves.push([cr, 6]);
-      }
-      // 퀸사이드
-      if (gameState.castling[color+'K'] && gameState.castling[color+'QR'] &&
-          !gameState.board[cr][1] && !gameState.board[cr][2] && !gameState.board[cr][3] &&
-          !isSquareAttacked(gameState.board,cr,3,enemy) && !isSquareAttacked(gameState.board,cr,2,enemy)) {
-        moves.push([cr, 2]);
-      }
-    }
-  } else if (type === 'R') {
-    slide([-1,1,0,0],[0,0,-1,1]);
-  } else if (type === 'B') {
-    slide([-1,-1,1,1],[-1,1,-1,1]);
-  } else if (type === 'Q') {
-    slide([-1,1,0,0,-1,-1,1,1],[0,0,-1,1,-1,1,-1,1]);
-  }
-  return moves;
-}
-
-// --- Chess AI: Alpha-Beta Minimax ---
+// --- 체스 AI: 알파-베타 미니맥스 ---
 const CHESS_PIECE_VAL = { P:100, N:320, B:330, R:500, Q:900, K:20000 };
 const CHESS_PST = {
   P:[[0,0,0,0,0,0,0,0],[50,50,50,50,50,50,50,50],[10,10,20,30,30,20,10,10],[5,5,10,25,25,10,5,5],[0,0,0,20,20,0,0,0],[5,-5,-10,0,0,-10,-5,5],[5,10,10,-20,-20,10,10,5],[0,0,0,0,0,0,0,0]],
@@ -3294,60 +3317,16 @@ function chessEvalBoard(board) {
   return score;
 }
 
-function chessMovesForBoard(board, r, c) {
-  const p=board[r][c]; if(!p) return [];
-  const col=p[0], type=p[1], moves=[], en=col==='w'?'b':'w', dir=col==='w'?-1:1;
-  const inB=(r,c)=>r>=0&&r<8&&c>=0&&c<8;
-  const emp=(r,c)=>inB(r,c)&&!board[r][c];
-  const isE=(r,c)=>inB(r,c)&&board[r][c]?.startsWith(en);
-  const can=(r,c)=>emp(r,c)||isE(r,c);
-  const sld=(drs,dcs)=>{for(let i=0;i<drs.length;i++){let nr=r+drs[i],nc=c+dcs[i];while(inB(nr,nc)){if(board[nr][nc]){if(isE(nr,nc))moves.push([nr,nc]);break;}moves.push([nr,nc]);nr+=drs[i];nc+=dcs[i];}}};
-  if(type==='P'){if(emp(r+dir,c)){moves.push([r+dir,c]);const sr=col==='w'?6:1;if(r===sr&&emp(r+dir*2,c))moves.push([r+dir*2,c]);}if(isE(r+dir,c-1))moves.push([r+dir,c-1]);if(isE(r+dir,c+1))moves.push([r+dir,c+1]);}
-  else if(type==='N'){[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(([dr,dc])=>{if(can(r+dr,c+dc))moves.push([r+dr,c+dc]);});}
-  else if(type==='K'){[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]].forEach(([dr,dc])=>{if(can(r+dr,c+dc))moves.push([r+dr,c+dc]);});}
-  else if(type==='R')sld([-1,1,0,0],[0,0,-1,1]);
-  else if(type==='B')sld([-1,-1,1,1],[-1,1,-1,1]);
-  else if(type==='Q')sld([-1,1,0,0,-1,-1,1,1],[0,0,-1,1,-1,1,-1,1]);
-  return moves;
-}
-
-function allChessMoves(board, col) {
-  const moves=[];
-  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
-    if(!board[r][c]?.startsWith(col))continue;
-    for(const [tr,tc] of chessMovesForBoard(board,r,c))moves.push({fr:r,fc:c,tr,tc});
-  }
-  return moves;
-}
-
-function applyBoardMove(board, {fr,fc,tr,tc}) {
-  const nb=board.map(row=>[...row]);
-  const piece=nb[fr][fc];
-  // 앙파상
-  if(piece?.[1]==='P'&&fc!==tc&&!nb[tr][tc]) nb[fr][tc]=null;
-  // 캐슬링
-  if(piece?.[1]==='K'&&Math.abs(tc-fc)===2){
-    const rfc=tc>fc?7:0, rtc=tc>fc?tc-1:tc+1;
-    nb[fr][rtc]=nb[fr][rfc]; nb[fr][rfc]=null;
-  }
-  nb[tr][tc]=piece; nb[fr][fc]=null;
-  if(nb[tr][tc]==='wP'&&tr===0)nb[tr][tc]='wQ';
-  if(nb[tr][tc]==='bP'&&tr===7)nb[tr][tc]='bQ';
-  return nb;
-}
-
-function alphaBeta(board, depth, alpha, beta, maxing) {
+function alphaBetaEx(board, ep, cas, depth, alpha, beta, maxing) {
   if(depth===0) return chessEvalBoard(board);
   const col=maxing?'b':'w';
-  const moves=allChessMoves(board,col);
-  if(moves.length===0) return maxing?-30000:30000;
+  const moves=allLegalMoves(board,ep,cas,col);
+  if(moves.length===0) return chessKingInCheck(board,col) ? (maxing?-29000:29000) : 0;
   if(maxing){
     let best=-Infinity;
     for(const m of moves){
-      const nb=applyBoardMove(board,m);
-      let hasWK=false; for(let r=0;r<8&&!hasWK;r++)for(let c=0;c<8&&!hasWK;c++)if(nb[r][c]==='wK')hasWK=true;
-      if(!hasWK){best=Math.max(best,30000);break;}
-      const ev=alphaBeta(nb,depth-1,alpha,beta,false);
+      const {board:nb,enPassant:nep,castling:nc}=applyMoveToState(board,m,ep,cas);
+      const ev=alphaBetaEx(nb,nep,nc,depth-1,alpha,beta,false);
       best=Math.max(best,ev); alpha=Math.max(alpha,ev);
       if(beta<=alpha)break;
     }
@@ -3355,10 +3334,8 @@ function alphaBeta(board, depth, alpha, beta, maxing) {
   } else {
     let best=Infinity;
     for(const m of moves){
-      const nb=applyBoardMove(board,m);
-      let hasBK=false; for(let r=0;r<8&&!hasBK;r++)for(let c=0;c<8&&!hasBK;c++)if(nb[r][c]==='bK')hasBK=true;
-      if(!hasBK){best=Math.min(best,-30000);break;}
-      const ev=alphaBeta(nb,depth-1,alpha,beta,true);
+      const {board:nb,enPassant:nep,castling:nc}=applyMoveToState(board,m,ep,cas);
+      const ev=alphaBetaEx(nb,nep,nc,depth-1,alpha,beta,true);
       best=Math.min(best,ev); beta=Math.min(beta,ev);
       if(beta<=alpha)break;
     }
@@ -3366,27 +3343,46 @@ function alphaBeta(board, depth, alpha, beta, maxing) {
   }
 }
 
+function chessAIDepth(rating) {
+  if(rating<=300)  return 1;
+  if(rating<=700)  return 2;
+  if(rating<=1300) return 3;
+  if(rating<=1900) return 4;
+  return 5;
+}
+
+function chessAINoise(rating) {
+  return Math.max(0, (2600 - rating) * 0.4);
+}
+
 function chessAIMove() {
-  if(gameState.isOver||gameState.myTurn)return;
-  const diff=gameState.difficulty||'medium';
-  const depth=diff==='easy'?1:diff==='medium'?2:3;
-  const moves=allChessMoves(gameState.board,'b');
+  if(gameState.isOver||gameState.myTurn) return;
+  const rating = parseInt(gameState.difficulty) || 300;
+  const depth = chessAIDepth(rating);
+  const noise = chessAINoise(rating);
+
+  const moves = allLegalMoves(gameState.board, gameState.enPassant, gameState.castling, 'b');
   if(moves.length===0){
     gameState.isOver=true;
-    updateRating('chess','win'); showRatingBar('chess');
-    $('gameStatus').textContent='🎉 승리! 체크메이트!'; return;
+    if(chessKingInCheck(gameState.board,'b')){
+      updateRating('chess','win'); showRatingBar('chess');
+      $('gameStatus').textContent='🎉 체크메이트! 승리!';
+    } else {
+      updateRating('chess','draw'); showRatingBar('chess');
+      $('gameStatus').textContent='🤝 스테일메이트! 무승부!';
+    }
+    return;
   }
+
   let bestMove=null, bestScore=-Infinity;
   for(const m of moves){
-    const nb=applyBoardMove(gameState.board,m);
-    let hasWK=false; for(let r=0;r<8&&!hasWK;r++)for(let c=0;c<8&&!hasWK;c++)if(nb[r][c]==='wK')hasWK=true;
-    if(!hasWK){bestMove=m;bestScore=999999;break;}
-    const sc=alphaBeta(nb,depth-1,-Infinity,Infinity,false);
+    const {board:nb,enPassant:nep,castling:nc}=applyMoveToState(gameState.board,m,gameState.enPassant,gameState.castling);
+    const sc=alphaBetaEx(nb,nep,nc,depth-1,-Infinity,Infinity,false) + (Math.random()-0.5)*noise;
     if(sc>bestScore){bestScore=sc;bestMove=m;}
   }
+
   if(bestMove){
     applyChessMove(bestMove.fr,bestMove.fc,bestMove.tr,bestMove.tc,false);
-    if(!gameState.isOver){gameState.myTurn=true;$('gameStatus').textContent='내 차례 (흰색 ♙)';}
   }
 }
 

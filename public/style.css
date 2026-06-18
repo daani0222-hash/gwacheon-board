@@ -2345,8 +2345,8 @@ input::placeholder, textarea::placeholder { color: var(--text-4); }
    ============================================= */
 .chess-board {
   display: grid;
-  grid-template-columns: repeat(8, 52px);
-  grid-template-rows: repeat(8, 52px);
+  grid-template-columns: repeat(8, 68px);
+  grid-template-rows: repeat(8, 68px);
   border: 3px solid #5d3a1a;
   border-radius: 4px;
   margin: 0 auto;
@@ -2354,9 +2354,9 @@ input::placeholder, textarea::placeholder { color: var(--text-4); }
   user-select: none;
 }
 .chess-cell {
-  width: 52px; height: 52px;
+  width: 68px; height: 68px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 34px; line-height: 1; cursor: pointer;
+  font-size: 44px; line-height: 1; cursor: pointer;
   transition: background .1s;
   position: relative;
 }
@@ -2364,12 +2364,25 @@ input::placeholder, textarea::placeholder { color: var(--text-4); }
 .chess-cell.dark  { background: #b58863; }
 .chess-cell.selected  { background: #7fc97f !important; }
 .chess-cell.possible  { background: #7fc9c9 !important; }
+.chess-cell.in-check  { background: rgba(255,50,50,.75) !important; }
 .chess-cell.possible::after {
   content: '';
   position: absolute;
-  width: 22px; height: 22px;
+  width: 28px; height: 28px;
   background: rgba(0,0,0,.2);
   border-radius: 50%;
+}
+.chess-piece-w {
+  color: #fff;
+  -webkit-text-stroke: 1.5px #111;
+  text-shadow: 0 1px 3px rgba(0,0,0,.6);
+  line-height: 1;
+}
+.chess-piece-b {
+  color: #111;
+  -webkit-text-stroke: 0.5px #555;
+  text-shadow: 0 1px 2px rgba(255,255,255,.3);
+  line-height: 1;
 }
 
 /* =============================================
@@ -3001,22 +3014,38 @@ input::placeholder, textarea::placeholder { color: var(--text-4); }
 
 /* ── 채팅 알림 바 ── */
 .chat-notif-bar {
-  position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
-  z-index: 9900; display: flex; flex-direction: column; gap: 6px;
-  align-items: center; pointer-events: none; min-width: 0; max-width: 360px; width: 90%;
+  position: fixed;
+  top: 16px; left: 50%; transform: translateX(-50%);
+  z-index: 99999;
+  display: flex; flex-direction: column; gap: 8px;
+  align-items: center;
+  pointer-events: none;
+  width: 90%; max-width: 380px;
 }
 .chat-notif-item {
-  background: rgba(20,20,40,0.92); color: #fff;
-  padding: 8px 16px; border-radius: 24px; font-size: 13px;
-  display: flex; align-items: center; gap: 8px; max-width: 100%;
-  backdrop-filter: blur(8px); box-shadow: 0 3px 16px rgba(0,0,0,0.4);
-  animation: chatNotifIn .25s ease; cursor: pointer; pointer-events: auto;
-  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  border: 1px solid rgba(255,255,255,.12);
+  width: 100%; box-sizing: border-box;
+  background: rgba(18, 18, 36, 0.96);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 28px;
+  font-size: 13px;
+  display: flex; align-items: center; gap: 8px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 20px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.1);
+  animation: chatNotifIn .22s ease forwards;
+  cursor: pointer; pointer-events: auto;
+  overflow: hidden;
+  transition: opacity .35s ease;
 }
-.chat-notif-item strong { flex-shrink: 0; }
-.chat-notif-item:hover { background: rgba(40,40,80,0.95); }
-@keyframes chatNotifIn { from { opacity:0; transform:translateY(-12px); } to { opacity:1; transform:none; } }
+.chat-notif-item.cni-fade { opacity: 0; }
+.cni-icon { font-size: 16px; flex-shrink: 0; }
+.cni-nick { font-weight: 700; flex-shrink: 0; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cni-msg  { opacity: .78; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.chat-notif-item:hover { background: rgba(50,50,90,.98); }
+@keyframes chatNotifIn {
+  from { opacity: 0; transform: translateY(-14px) scale(.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
 
 /* ── 스프라이트/배경 탭 ── */
 .scratch-panel-tabs {
@@ -3555,6 +3584,6 @@ input::placeholder, textarea::placeholder { color: var(--text-4); }
   .scratch-cats { display: none; }
   .scratch-pal { width: 160px; }
   .scratch-right { width: 280px; }
-  .chess-board { grid-template-columns: repeat(8, 38px); grid-template-rows: repeat(8, 38px); }
-  .chess-cell { width: 38px; height: 38px; font-size: 24px; }
+  .chess-board { grid-template-columns: repeat(8, 44px); grid-template-rows: repeat(8, 44px); }
+  .chess-cell { width: 44px; height: 44px; font-size: 28px; }
 }
