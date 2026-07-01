@@ -1,7 +1,7 @@
 /**
- * app.js - 과천중 비밀게시판 클라이언트 v2.10
+ * app.js - 과천중 비밀게시판 클라이언트 v2.12
  */
-console.log('%c과천중 게임존 v2.10 로드됨 ✅', 'color:#6366f1;font-weight:bold;font-size:14px');
+console.log('%c과천중 게임존 v2.12 로드됨 ✅', 'color:#6366f1;font-weight:bold;font-size:14px');
 
 // =============================================
 // 인증 토큰
@@ -2308,7 +2308,7 @@ function closeUserProfile() {
 let gameState = {
   type: null,
   mode: null,
-  difficulty: 'medium', // 'easy' | 'medium' | 'hard'
+  difficulty: 'medium',
   roomId: null,
   myTurn: false,
   mySymbol: null,
@@ -2321,6 +2321,13 @@ let gameState = {
   gomokuCtx: null,
   selected: null,
   possibleMoves: [],
+  enPassant: null,
+  castling: null,
+  capturedByWhite: [],
+  capturedByBlack: [],
+  whiteTime: 600,
+  blackTime: 600,
+  chessTimer: null,
   _shootCleanup: null,
 };
 
@@ -2391,12 +2398,13 @@ function setDifficulty(diff) {
 function closeGame() {
   if (gameState.snakeTimer) { clearInterval(gameState.snakeTimer); gameState.snakeTimer = null; }
   if (gameState.tetrisTimer) { clearInterval(gameState.tetrisTimer); gameState.tetrisTimer = null; }
+  if (gameState.chessTimer) { clearInterval(gameState.chessTimer); gameState.chessTimer = null; }
   if (gameState._shootCleanup) { gameState._shootCleanup(); gameState._shootCleanup = null; }
   if (gameState.roomId) socket.emit('leaveGameRoom', { roomId: gameState.roomId });
   $('gameModal').classList.add('hidden');
   if ($('gameRatingBar')) $('gameRatingBar').classList.add('hidden');
   const diff = gameState.difficulty || 'medium';
-  gameState = { type:null, mode:null, difficulty: diff, roomId:null, myTurn:false, mySymbol:null, board:null, isOver:false, snakeTimer:null, tetrisTimer:null, snakePaused:false, gomokuCanvas:null, gomokuCtx:null, selected:null, possibleMoves:[], _shootCleanup:null };
+  gameState = { type:null, mode:null, difficulty:diff, roomId:null, myTurn:false, mySymbol:null, board:null, isOver:false, snakeTimer:null, tetrisTimer:null, snakePaused:false, gomokuCanvas:null, gomokuCtx:null, selected:null, possibleMoves:[], enPassant:null, castling:null, capturedByWhite:[], capturedByBlack:[], whiteTime:600, blackTime:600, chessTimer:null, _shootCleanup:null };
 }
 
 function startGame(mode) {
@@ -2423,6 +2431,7 @@ function startGame(mode) {
 function restartGame() {
   if (gameState.snakeTimer) { clearInterval(gameState.snakeTimer); gameState.snakeTimer = null; }
   if (gameState.tetrisTimer) { clearInterval(gameState.tetrisTimer); gameState.tetrisTimer = null; }
+  if (gameState.chessTimer) { clearInterval(gameState.chessTimer); gameState.chessTimer = null; }
   if (gameState._shootCleanup) { gameState._shootCleanup(); gameState._shootCleanup = null; }
   if (gameState.mode) startGame(gameState.mode);
 }
@@ -2868,11 +2877,14 @@ function initSnake() {
   const W = COLS*CELL, H = ROWS*CELL;
   let snake = [{x:12,y:10},{x:11,y:10},{x:10,y:10}];
   let dir = {x:1,y:0}, nextDir = {x:1,y:0};
-  let food = randomFood(snake, COLS, ROWS);
+  const SECRET_DOOR = {x:6,y:7};
+  let food = randomFood([...snake, SECRET_DOOR], COLS, ROWS);
   let goldenFood = null, goldenTimer = 0;
   let score = 0, level = 1, eaten = 0;
   let obstacles = [];
   let gameOver = false;
+  let secretRoomActive = false, secretBalls = [], secretRoomEndTime = 0;
+  let savedObstacles = [], savedFood = null;
   gameState.snakePaused = false;
 
   const inner = $('gameBoardInner');
@@ -2916,31 +2928,74 @@ function initSnake() {
     for(let i=0;i<count;i++){
       let p;
       do{p={x:Math.floor(Math.random()*COLS),y:Math.floor(Math.random()*ROWS)};}
-      while(snake.some(s=>s.x===p.x&&s.y===p.y)||obs.some(o=>o.x===p.x&&o.y===p.y)||(Math.abs(p.x-snake[0].x)<4&&Math.abs(p.y-snake[0].y)<4));
+      while(snake.some(s=>s.x===p.x&&s.y===p.y)||obs.some(o=>o.x===p.x&&o.y===p.y)||(p.x===SECRET_DOOR.x&&p.y===SECRET_DOOR.y)||(Math.abs(p.x-snake[0].x)<4&&Math.abs(p.y-snake[0].y)<4));
       obs.push(p);
     }
     return obs;
   }
 
+  function enterSecretRoom(head) {
+    secretRoomActive = true;
+    savedObstacles = obstacles;
+    savedFood = food;
+    obstacles = [];
+    goldenFood = null;
+    secretBalls = [];
+    const ballCount = 40;
+    for (let i=0;i<ballCount;i++){
+      secretBalls.push(randomFood([...snake, head, SECRET_DOOR, ...secretBalls], COLS, ROWS));
+    }
+    secretRoomEndTime = Date.now() + 15000;
+    $('gameStatus').textContent = '🌌 비밀 공간 발견! 20점 보너스 공을 모으세요! (15초)';
+  }
+
+  function exitSecretRoom() {
+    secretRoomActive = false;
+    obstacles = savedObstacles;
+    food = (savedFood && !snake.some(s=>s.x===savedFood.x&&s.y===savedFood.y) && !obstacles.some(o=>o.x===savedFood.x&&o.y===savedFood.y))
+      ? savedFood
+      : randomFood([...snake, ...obstacles, SECRET_DOOR], COLS, ROWS);
+    secretBalls = [];
+    $('gameStatus').textContent = '비밀 공간을 빠져나왔습니다! 계속 진행하세요';
+  }
+
   function draw() {
-    ctx.fillStyle='#0f1923'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle=secretRoomActive?'#190f2e':'#0f1923'; ctx.fillRect(0,0,W,H);
     ctx.strokeStyle='rgba(255,255,255,.04)'; ctx.lineWidth=1;
     for(let x=0;x<=COLS;x++){ctx.beginPath();ctx.moveTo(x*CELL,0);ctx.lineTo(x*CELL,H);ctx.stroke();}
     for(let y=0;y<=ROWS;y++){ctx.beginPath();ctx.moveTo(0,y*CELL);ctx.lineTo(W,y*CELL);ctx.stroke();}
 
-    obstacles.forEach(o=>{
-      ctx.fillStyle='#3a3a5c'; ctx.fillRect(o.x*CELL+1,o.y*CELL+1,CELL-2,CELL-2);
-      ctx.fillStyle='#555'; ctx.fillRect(o.x*CELL+4,o.y*CELL+4,CELL-8,CELL-8);
-    });
+    if (!secretRoomActive) {
+      obstacles.forEach(o=>{
+        ctx.fillStyle='#3a3a5c'; ctx.fillRect(o.x*CELL+1,o.y*CELL+1,CELL-2,CELL-2);
+        ctx.fillStyle='#555'; ctx.fillRect(o.x*CELL+4,o.y*CELL+4,CELL-8,CELL-8);
+      });
+      // 비밀의 문 (평범한 벽처럼 보이지만 길이 67일 때 충돌하면 비밀 공간으로 이어짐)
+      ctx.fillStyle='#3a3a5c'; ctx.fillRect(SECRET_DOOR.x*CELL+1,SECRET_DOOR.y*CELL+1,CELL-2,CELL-2);
+      ctx.fillStyle='#555'; ctx.fillRect(SECRET_DOOR.x*CELL+4,SECRET_DOOR.y*CELL+4,CELL-8,CELL-8);
+    }
 
-    ctx.save(); ctx.shadowColor='#ff4757'; ctx.shadowBlur=14;
-    ctx.fillStyle='#ff4757';
-    ctx.beginPath(); ctx.arc((food.x+.5)*CELL,(food.y+.5)*CELL,CELL*.38,0,Math.PI*2); ctx.fill();
-    ctx.restore();
-    ctx.fillStyle='rgba(255,255,255,.4)';
-    ctx.beginPath(); ctx.arc((food.x+.3)*CELL,(food.y+.3)*CELL,CELL*.12,0,Math.PI*2); ctx.fill();
+    if (secretRoomActive) {
+      secretBalls.forEach(b=>{
+        const pulse=0.9+Math.sin(Date.now()/150)*.1;
+        ctx.save(); ctx.shadowColor='#7c5cff'; ctx.shadowBlur=12;
+        ctx.fillStyle='#7c5cff';
+        ctx.beginPath(); ctx.arc((b.x+.5)*CELL,(b.y+.5)*CELL,CELL*.34*pulse,0,Math.PI*2); ctx.fill();
+        ctx.restore();
+        ctx.fillStyle='#fff'; ctx.font='bold 9px sans-serif'; ctx.textAlign='center';
+        ctx.fillText('20',(b.x+.5)*CELL,(b.y+.5)*CELL+3);
+        ctx.textAlign='left';
+      });
+    } else {
+      ctx.save(); ctx.shadowColor='#ff4757'; ctx.shadowBlur=14;
+      ctx.fillStyle='#ff4757';
+      ctx.beginPath(); ctx.arc((food.x+.5)*CELL,(food.y+.5)*CELL,CELL*.38,0,Math.PI*2); ctx.fill();
+      ctx.restore();
+      ctx.fillStyle='rgba(255,255,255,.4)';
+      ctx.beginPath(); ctx.arc((food.x+.3)*CELL,(food.y+.3)*CELL,CELL*.12,0,Math.PI*2); ctx.fill();
+    }
 
-    if (goldenFood) {
+    if (goldenFood && !secretRoomActive) {
       const pulse=0.9+Math.sin(Date.now()/180)*.1;
       ctx.save(); ctx.shadowColor='#ffd700'; ctx.shadowBlur=18;
       ctx.fillStyle='#ffd700';
@@ -2972,8 +3027,14 @@ function initSnake() {
     ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(0,0,W,26);
     ctx.fillStyle='#fff'; ctx.font='bold 13px monospace'; ctx.textAlign='left';
     ctx.fillText(`점수: ${score}`,8,18);
-    ctx.fillStyle='#ffd700'; ctx.textAlign='center';
-    ctx.fillText(`Lv.${level}`,W/2,18);
+    if (secretRoomActive) {
+      const remain = Math.max(0, Math.ceil((secretRoomEndTime-Date.now())/1000));
+      ctx.fillStyle='#7c5cff'; ctx.textAlign='center';
+      ctx.fillText(`🌌 비밀공간 ${remain}s`,W/2,18);
+    } else {
+      ctx.fillStyle='#ffd700'; ctx.textAlign='center';
+      ctx.fillText(`Lv.${level}`,W/2,18);
+    }
     ctx.fillStyle='#88aaff'; ctx.textAlign='right';
     ctx.fillText(`길이: ${snake.length}`,W-8,18);
     ctx.textAlign='left';
@@ -2983,7 +3044,20 @@ function initSnake() {
     if(gameState.snakePaused||gameOver)return;
     dir=nextDir;
     const head={x:snake[0].x+dir.x,y:snake[0].y+dir.y};
-    const died=head.x<0||head.x>=COLS||head.y<0||head.y>=ROWS||snake.some(s=>s.x===head.x&&s.y===head.y)||obstacles.some(o=>o.x===head.x&&o.y===head.y);
+
+    const hitWall = head.x<0||head.x>=COLS||head.y<0||head.y>=ROWS;
+    const hitSelf = !hitWall && snake.some(s=>s.x===head.x&&s.y===head.y);
+    const hitSecretDoor = !hitWall && !secretRoomActive && head.x===SECRET_DOOR.x && head.y===SECRET_DOOR.y;
+    const hitObstacle = !hitWall && !secretRoomActive && !hitSecretDoor && obstacles.some(o=>o.x===head.x&&o.y===head.y);
+
+    if (hitSecretDoor && snake.length===67) {
+      snake.unshift(head); snake.pop();
+      enterSecretRoom(head);
+      draw();
+      return;
+    }
+
+    const died = hitWall || hitSelf || hitObstacle || hitSecretDoor;
     if(died){
       gameOver=true; clearInterval(gameState.snakeTimer); document.removeEventListener('keydown',keyHandler);
       ctx.fillStyle='rgba(0,0,0,.72)'; ctx.fillRect(0,H/2-44,W,88);
@@ -2996,16 +3070,26 @@ function initSnake() {
       return;
     }
     snake.unshift(head);
+
+    if (secretRoomActive) {
+      const idx = secretBalls.findIndex(b=>b.x===head.x&&b.y===head.y);
+      if (idx>=0) { secretBalls.splice(idx,1); score+=20; }
+      else { snake.pop(); }
+      if (Date.now()>=secretRoomEndTime || secretBalls.length===0) exitSecretRoom();
+      draw();
+      return;
+    }
+
     if(head.x===food.x&&head.y===food.y){
       score+=level; eaten++;
-      food=randomFood([...snake,...obstacles],COLS,ROWS);
+      food=randomFood([...snake,...obstacles,SECRET_DOOR],COLS,ROWS);
       if(eaten%8===0){
         level++; obstacles=buildObstacles(level);
         clearInterval(gameState.snakeTimer);
         gameState.snakeTimer=setInterval(tick,Math.max(65,200-(level-1)*18));
         $('gameStatus').textContent=`🎉 레벨 ${level}! 속도 상승!`;
       }
-      if(!goldenFood&&Math.random()<0.15){goldenFood=randomFood([...snake,...obstacles,food],COLS,ROWS);goldenTimer=90;}
+      if(!goldenFood&&Math.random()<0.15){goldenFood=randomFood([...snake,...obstacles,food,SECRET_DOOR],COLS,ROWS);goldenTimer=90;}
     } else if(goldenFood&&head.x===goldenFood.x&&head.y===goldenFood.y){
       score+=5*level; goldenFood=null;
       for(let i=0;i<2;i++)snake.push({...snake[snake.length-1]});
@@ -3179,6 +3263,77 @@ function allLegalMoves(board, enPassant, castling, color) {
   return moves;
 }
 
+// ── Chess clock helpers ──
+function formatChessClock(s) {
+  if (s <= 0) return '0:00';
+  const m = Math.floor(s / 60), sec = s % 60;
+  return `${m}:${String(sec).padStart(2,'0')}`;
+}
+
+function startChessTimer() {
+  stopChessTimer();
+  gameState.chessTimer = setInterval(() => {
+    if (gameState.isOver) { stopChessTimer(); return; }
+    if (gameState.myTurn) {
+      gameState.whiteTime = Math.max(0, gameState.whiteTime - 1);
+      if (gameState.whiteTime === 0) {
+        stopChessTimer(); gameState.isOver = true;
+        if (gameState.mode === 'ai') { updateRating('chess','loss'); showRatingBar('chess'); }
+        $('gameStatus').textContent = '⏱ 시간 초과! 패배!';
+        renderChessBoard(); updateChessClocks(); return;
+      }
+    } else {
+      gameState.blackTime = Math.max(0, gameState.blackTime - 1);
+      if (gameState.blackTime === 0) {
+        stopChessTimer(); gameState.isOver = true;
+        if (gameState.mode === 'ai') { updateRating('chess','win'); showRatingBar('chess'); }
+        $('gameStatus').textContent = '⏱ AI 시간 초과! 승리!';
+        renderChessBoard(); updateChessClocks(); return;
+      }
+    }
+    updateChessClocks();
+  }, 1000);
+}
+
+function stopChessTimer() {
+  if (gameState.chessTimer) { clearInterval(gameState.chessTimer); gameState.chessTimer = null; }
+}
+
+function updateChessClocks() {
+  const wEl = document.getElementById('chessClockWhite');
+  const bEl = document.getElementById('chessClockBlack');
+  const wLow = gameState.whiteTime <= 30;
+  const bLow = gameState.blackTime <= 30;
+  if (wEl) {
+    wEl.textContent = formatChessClock(gameState.whiteTime);
+    wEl.className = 'chess-clock' + (gameState.myTurn && !gameState.isOver ? ' active' : '') + (wLow ? ' flagged' : '');
+  }
+  if (bEl) {
+    bEl.textContent = formatChessClock(gameState.blackTime);
+    bEl.className = 'chess-clock' + (!gameState.myTurn && !gameState.isOver ? ' active' : '') + (bLow ? ' flagged' : '');
+  }
+}
+
+function renderChessCaptured() {
+  const VALS = { P:1, N:3, B:3, R:5, Q:9, K:0 };
+  const SYMS = { wP:'♙',wN:'♘',wB:'♗',wR:'♖',wQ:'♕', bP:'♟',bN:'♞',bB:'♝',bR:'♜',bQ:'♛' };
+  const sortPieces = arr => [...arr].sort((a,b)=>(VALS[a[1]]||0)-(VALS[b[1]]||0));
+  const wScore = gameState.capturedByWhite.reduce((s,p)=>s+(VALS[p[1]]||0),0);
+  const bScore = gameState.capturedByBlack.reduce((s,p)=>s+(VALS[p[1]]||0),0);
+  const adv = wScore - bScore;
+
+  const wEl = document.getElementById('chessCapsWhite');
+  const bEl = document.getElementById('chessCapsBlack');
+  if (wEl) {
+    const pcs = sortPieces(gameState.capturedByWhite).map(p=>`<span>${SYMS[p]||''}</span>`).join('');
+    wEl.innerHTML = pcs + (adv > 0 ? `<span class="chess-adv">+${adv}</span>` : '');
+  }
+  if (bEl) {
+    const pcs = sortPieces(gameState.capturedByBlack).map(p=>`<span>${SYMS[p]||''}</span>`).join('');
+    bEl.innerHTML = pcs + (adv < 0 ? `<span class="chess-adv">+${-adv}</span>` : '');
+  }
+}
+
 function initChess(mode) {
   const INIT = [
     ['bR','bN','bB','bQ','bK','bB','bN','bR'],
@@ -3198,22 +3353,66 @@ function initChess(mode) {
   gameState.possibleMoves = [];
   gameState.enPassant = null;
   gameState.castling = { wK:true, wKR:true, wQR:true, bK:true, bKR:true, bQR:true };
+  gameState.capturedByWhite = [];
+  gameState.capturedByBlack = [];
+  gameState.whiteTime = 600;
+  gameState.blackTime = 600;
+
+  const myRating = getGameRating('chess');
+  const aiRating = parseInt(gameState.difficulty) || 300;
+  const opName  = mode === 'ai' ? `AI` : '상대방';
+  const opRating = mode === 'ai' ? aiRating : '?';
+  const myName  = USER.nickname || '나';
+  const myBg    = USER.color || '#4f9df7';
+  const myInit  = (myName[0] || '?').toUpperCase();
 
   const inner = $('gameBoardInner');
-  inner.style.cssText = 'display:flex;justify-content:center;padding:8px 0';
-  inner.innerHTML = '';
+  inner.style.cssText = 'padding:0;display:flex;flex-direction:column;align-items:center';
+  inner.innerHTML = `
+    <div class="chess-ui">
+      <div class="chess-panel" id="chessBlackPanel">
+        <div class="chess-panel-left">
+          <div class="chess-panel-row">
+            <div class="chess-avt" style="background:#555">🤖</div>
+            <div class="chess-name-col">
+              <span class="chess-pname">${escHtml(opName)}</span>
+              <span class="chess-prating">(${opRating})</span>
+              <div class="chess-caps" id="chessCapsBlack"></div>
+            </div>
+          </div>
+        </div>
+        <div class="chess-clock" id="chessClockBlack">10:00</div>
+      </div>
+      <div id="chessBoardGrid"></div>
+      <div class="chess-panel" id="chessWhitePanel">
+        <div class="chess-panel-left">
+          <div class="chess-panel-row">
+            <div class="chess-avt" style="background:${myBg}">${myInit}</div>
+            <div class="chess-name-col">
+              <span class="chess-pname">${escHtml(myName)}</span>
+              <span class="chess-prating">(${myRating})</span>
+              <div class="chess-caps" id="chessCapsWhite"></div>
+            </div>
+          </div>
+        </div>
+        <div class="chess-clock active" id="chessClockWhite">10:00</div>
+      </div>
+    </div>`;
+
+  $('gameStatus').textContent = '';
   renderChessBoard();
-  $('gameStatus').textContent = '흰색(♙)이 먼저 시작합니다!';
+  startChessTimer();
 }
 
 function renderChessBoard() {
-  const inner = $('gameBoardInner');
-  inner.innerHTML = '';
+  const container = document.getElementById('chessBoardGrid') || $('gameBoardInner');
+  container.innerHTML = '';
   const grid = document.createElement('div');
   grid.className = 'chess-board';
 
   const wInCheck = chessKingInCheck(gameState.board, 'w');
   const bInCheck = chessKingInCheck(gameState.board, 'b');
+  const possSet = new Set(gameState.possibleMoves.map(([r,c])=>`${r},${c}`));
 
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
@@ -3223,10 +3422,14 @@ function renderChessBoard() {
 
       if (gameState.selected && gameState.selected[0] === r && gameState.selected[1] === c)
         cell.classList.add('selected');
-      if (gameState.possibleMoves.some(([pr,pc]) => pr === r && pc === c))
-        cell.classList.add('possible');
 
       const piece = gameState.board[r][c];
+      const isPoss = possSet.has(`${r},${c}`);
+      if (isPoss) {
+        cell.classList.add('possible');
+        if (piece) cell.classList.add('possible-capture');
+      }
+
       if (piece) {
         const isW = piece.startsWith('w');
         if (piece[1] === 'K' && ((isW && wInCheck) || (!isW && bInCheck)))
@@ -3238,7 +3441,7 @@ function renderChessBoard() {
       grid.appendChild(cell);
     }
   }
-  inner.appendChild(grid);
+  container.appendChild(grid);
 }
 
 function handleChessClick(r, c) {
@@ -3263,12 +3466,27 @@ function handleChessClick(r, c) {
 }
 
 function applyChessMove(fr, fc, tr, tc, isMe) {
+  const movingPiece = gameState.board[fr][fc];
+  const capturedPiece = gameState.board[tr][tc];
+  let epCaptured = null;
+  if (movingPiece && movingPiece[1] === 'P' && gameState.enPassant &&
+      tr === gameState.enPassant[0] && tc === gameState.enPassant[1]) {
+    const epR = movingPiece[0] === 'w' ? tr + 1 : tr - 1;
+    epCaptured = gameState.board[epR][tc];
+  }
+
   const {board:nb, enPassant:nep, castling:nc} = applyMoveToState(gameState.board, {fr,fc,tr,tc}, gameState.enPassant, gameState.castling);
   gameState.board = nb;
   gameState.enPassant = nep;
   gameState.castling = nc;
   gameState.selected = null;
   gameState.possibleMoves = [];
+
+  const actualCapture = capturedPiece || epCaptured;
+  if (actualCapture) {
+    if (movingPiece && movingPiece[0] === 'w') gameState.capturedByWhite.push(actualCapture);
+    else gameState.capturedByBlack.push(actualCapture);
+  }
 
   // 상대 색 체크메이트/스테일메이트 확인
   const oppColor = isMe ? (gameState.mySymbol === 'w' ? 'b' : 'w') : gameState.mySymbol;
@@ -3277,7 +3495,10 @@ function applyChessMove(fr, fc, tr, tc, isMe) {
 
   if (oppMoves.length === 0) {
     gameState.isOver = true;
+    stopChessTimer();
     renderChessBoard();
+    renderChessCaptured();
+    updateChessClocks();
     if (oppInCheck) {
       if (gameState.mode === 'ai') { updateRating('chess', isMe ? 'win' : 'loss'); showRatingBar('chess'); }
       $('gameStatus').textContent = isMe ? '🎉 체크메이트! 승리!' : '😢 체크메이트! 패배!';
@@ -3291,6 +3512,8 @@ function applyChessMove(fr, fc, tr, tc, isMe) {
 
   gameState.myTurn = !isMe;
   renderChessBoard();
+  renderChessCaptured();
+  updateChessClocks();
 
   const myInCheck = chessKingInCheck(gameState.board, gameState.mySymbol);
 
