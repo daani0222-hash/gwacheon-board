@@ -2883,7 +2883,7 @@ function initSnake() {
   let score = 0, level = 1, eaten = 0;
   let obstacles = [];
   let gameOver = false;
-  let secretRoomActive = false, secretBalls = [], secretRoomEndTime = 0;
+  let secretRoomActive = false, secretRoomType = 0, secretBalls = [], secretRoomEndTime = 0;
   let savedObstacles = [], savedFood = null;
   gameState.snakePaused = false;
 
@@ -2934,23 +2934,29 @@ function initSnake() {
     return obs;
   }
 
-  function enterSecretRoom(head) {
+  function enterSecretRoom(head, type) {
     secretRoomActive = true;
+    secretRoomType = type || 1;
     savedObstacles = obstacles;
     savedFood = food;
     obstacles = [];
     goldenFood = null;
     secretBalls = [];
-    const ballCount = 40;
+    const ballCount = type === 2 ? 50 : 40;
+    const duration  = type === 2 ? 20000 : 15000;
     for (let i=0;i<ballCount;i++){
       secretBalls.push(randomFood([...snake, head, SECRET_DOOR, ...secretBalls], COLS, ROWS));
     }
-    secretRoomEndTime = Date.now() + 15000;
-    $('gameStatus').textContent = '🌌 비밀 공간 발견! 20점 보너스 공을 모으세요! (15초)';
+    secretRoomEndTime = Date.now() + duration;
+    if (type === 2)
+      $('gameStatus').textContent = '🏆 코너 보너스룸! 황금 공 50개, 20초!';
+    else
+      $('gameStatus').textContent = '🌌 비밀 공간 발견! 20점 보너스 공을 모으세요! (15초)';
   }
 
   function exitSecretRoom() {
     secretRoomActive = false;
+    secretRoomType = 0;
     obstacles = savedObstacles;
     food = (savedFood && !snake.some(s=>s.x===savedFood.x&&s.y===savedFood.y) && !obstacles.some(o=>o.x===savedFood.x&&o.y===savedFood.y))
       ? savedFood
@@ -2960,7 +2966,8 @@ function initSnake() {
   }
 
   function draw() {
-    ctx.fillStyle=secretRoomActive?'#190f2e':'#0f1923'; ctx.fillRect(0,0,W,H);
+    const bgCol = secretRoomActive ? (secretRoomType===2?'#2e1a00':'#190f2e') : '#0f1923';
+    ctx.fillStyle=bgCol; ctx.fillRect(0,0,W,H);
     ctx.strokeStyle='rgba(255,255,255,.04)'; ctx.lineWidth=1;
     for(let x=0;x<=COLS;x++){ctx.beginPath();ctx.moveTo(x*CELL,0);ctx.lineTo(x*CELL,H);ctx.stroke();}
     for(let y=0;y<=ROWS;y++){ctx.beginPath();ctx.moveTo(0,y*CELL);ctx.lineTo(W,y*CELL);ctx.stroke();}
@@ -2975,11 +2982,20 @@ function initSnake() {
       ctx.fillStyle='#555'; ctx.fillRect(SECRET_DOOR.x*CELL+4,SECRET_DOOR.y*CELL+4,CELL-8,CELL-8);
     }
 
+    if (!secretRoomActive) {
+      // 코너 보너스룸 진입구 힌트 (가장 오른쪽 상단 모서리 셀에 미세한 금빛 테두리)
+      ctx.save();
+      ctx.strokeStyle='rgba(255,170,0,0.35)'; ctx.lineWidth=2;
+      ctx.strokeRect((COLS-1)*CELL+1,1,CELL-2,CELL-2);
+      ctx.restore();
+    }
     if (secretRoomActive) {
+      const ballColor = secretRoomType===2 ? '#ffaa00' : '#7c5cff';
+      const glowColor = secretRoomType===2 ? '#ffdd00' : '#7c5cff';
       secretBalls.forEach(b=>{
         const pulse=0.9+Math.sin(Date.now()/150)*.1;
-        ctx.save(); ctx.shadowColor='#7c5cff'; ctx.shadowBlur=12;
-        ctx.fillStyle='#7c5cff';
+        ctx.save(); ctx.shadowColor=glowColor; ctx.shadowBlur=12;
+        ctx.fillStyle=ballColor;
         ctx.beginPath(); ctx.arc((b.x+.5)*CELL,(b.y+.5)*CELL,CELL*.34*pulse,0,Math.PI*2); ctx.fill();
         ctx.restore();
         ctx.fillStyle='#fff'; ctx.font='bold 9px sans-serif'; ctx.textAlign='center';
@@ -3029,8 +3045,8 @@ function initSnake() {
     ctx.fillText(`점수: ${score}`,8,18);
     if (secretRoomActive) {
       const remain = Math.max(0, Math.ceil((secretRoomEndTime-Date.now())/1000));
-      ctx.fillStyle='#7c5cff'; ctx.textAlign='center';
-      ctx.fillText(`🌌 비밀공간 ${remain}s`,W/2,18);
+      ctx.fillStyle=secretRoomType===2?'#ffaa00':'#7c5cff'; ctx.textAlign='center';
+      ctx.fillText(secretRoomType===2?`🏆 보너스룸 ${remain}s`:`🌌 비밀공간 ${remain}s`,W/2,18);
     } else {
       ctx.fillStyle='#ffd700'; ctx.textAlign='center';
       ctx.fillText(`Lv.${level}`,W/2,18);
@@ -3049,15 +3065,23 @@ function initSnake() {
     const hitSelf = !hitWall && snake.some(s=>s.x===head.x&&s.y===head.y);
     const hitSecretDoor = !hitWall && !secretRoomActive && head.x===SECRET_DOOR.x && head.y===SECRET_DOOR.y;
     const hitObstacle = !hitWall && !secretRoomActive && !hitSecretDoor && obstacles.some(o=>o.x===head.x&&o.y===head.y);
+    // 코너 보너스룸: 가장 오른쪽 열 상단 벽에 부딪히면 언제든 진입
+    const hitCornerBonus = !secretRoomActive && head.y < 0 && head.x === COLS-1;
 
     if (hitSecretDoor && snake.length===67) {
       snake.unshift(head); snake.pop();
-      enterSecretRoom(head);
+      enterSecretRoom(head, 1);
       draw();
       return;
     }
 
-    const died = hitWall || hitSelf || hitObstacle || hitSecretDoor;
+    if (hitCornerBonus) {
+      enterSecretRoom(snake[0], 2);
+      draw();
+      return;
+    }
+
+    const died = (hitWall && !hitCornerBonus) || hitSelf || hitObstacle || hitSecretDoor;
     if(died){
       gameOver=true; clearInterval(gameState.snakeTimer); document.removeEventListener('keydown',keyHandler);
       ctx.fillStyle='rgba(0,0,0,.72)'; ctx.fillRect(0,H/2-44,W,88);
