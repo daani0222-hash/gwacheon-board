@@ -3076,6 +3076,7 @@ function initSnake() {
     }
 
     if (hitCornerBonus) {
+      dir = {x:0, y:1}; nextDir = {x:0, y:1}; // 벽에서 튕겨 아래로
       enterSecretRoom(snake[0], 2);
       draw();
       return;
