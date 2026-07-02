@@ -2880,7 +2880,8 @@ function initSnake() {
   const SECRET_DOOR = {x:6,y:7};
   let food = randomFood([...snake, SECRET_DOOR], COLS, ROWS);
   let goldenFood = null, goldenTimer = 0;
-  let score = 0, level = 1, eaten = 0;
+  let level = 1, eaten = 0;
+  const score = () => snake.length - 3;
   let obstacles = [];
   let gameOver = false;
   let secretRoomActive = false, secretRoomType = 0, secretBalls = [], secretRoomEndTime = 0;
@@ -3042,7 +3043,7 @@ function initSnake() {
 
     ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(0,0,W,26);
     ctx.fillStyle='#fff'; ctx.font='bold 13px monospace'; ctx.textAlign='left';
-    ctx.fillText(`점수: ${score}`,8,18);
+    ctx.fillText(`점수: ${score()}`,8,18);
     if (secretRoomActive) {
       const remain = Math.max(0, Math.ceil((secretRoomEndTime-Date.now())/1000));
       ctx.fillStyle=secretRoomType===2?'#ffaa00':'#7c5cff'; ctx.textAlign='center';
@@ -3089,16 +3090,16 @@ function initSnake() {
       ctx.fillStyle='#ff4757'; ctx.font='bold 26px sans-serif'; ctx.textAlign='center';
       ctx.fillText('💀 게임오버',W/2,H/2-8);
       ctx.fillStyle='#fff'; ctx.font='15px sans-serif';
-      ctx.fillText(`최종 점수: ${score}  Lv.${level}`,W/2,H/2+22);
+      ctx.fillText(`최종 점수: ${score()}  Lv.${level}`,W/2,H/2+22);
       ctx.textAlign='left';
-      $('gameStatus').textContent=`💀 게임오버! 최종 점수: ${score} | Lv.${level}`;
+      $('gameStatus').textContent=`💀 게임오버! 최종 점수: ${score()} | Lv.${level}`;
       return;
     }
     snake.unshift(head);
 
     if (secretRoomActive) {
       const idx = secretBalls.findIndex(b=>b.x===head.x&&b.y===head.y);
-      if (idx>=0) { secretBalls.splice(idx,1); score+=20; }
+      if (idx>=0) { secretBalls.splice(idx,1); } // 길이 증가 → score() 자동 반영
       else { snake.pop(); }
       if (Date.now()>=secretRoomEndTime || secretBalls.length===0) exitSecretRoom();
       draw();
@@ -3106,7 +3107,7 @@ function initSnake() {
     }
 
     if(head.x===food.x&&head.y===food.y){
-      score+=level; eaten++;
+      eaten++;
       food=randomFood([...snake,...obstacles,SECRET_DOOR],COLS,ROWS);
       if(eaten%8===0){
         level++; obstacles=buildObstacles(level);
@@ -3116,7 +3117,7 @@ function initSnake() {
       }
       if(!goldenFood&&Math.random()<0.15){goldenFood=randomFood([...snake,...obstacles,food,SECRET_DOOR],COLS,ROWS);goldenTimer=90;}
     } else if(goldenFood&&head.x===goldenFood.x&&head.y===goldenFood.y){
-      score+=5*level; goldenFood=null;
+      goldenFood=null;
       for(let i=0;i<2;i++)snake.push({...snake[snake.length-1]});
     } else { snake.pop(); }
     if(goldenFood){goldenTimer--;if(goldenTimer<=0)goldenFood=null;}
